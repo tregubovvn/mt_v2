@@ -5,7 +5,7 @@ https://tregubovvn.github.io/mt/index.html?name=https://tregubovvn.github.io/mt/
 
 
 Редактор: 
-https://tregubovvn.github.io/mt/editor/index.html
+https://tregubovvn.github.io/mt_v2/editor/index.html
 
 
 Веб-приложение для прохождения тестов в формате **Moodle XML** с полной поддержкой математических формул **LaTeX**. Тесты можно загружать по прямой ссылке, с Яндекс.Диска или сканируя QR-код камерой устройства.
