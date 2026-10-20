@@ -20,7 +20,7 @@ async function run(flags, fn) {
     const T = w.__T;
     if (!T) throw new Error('app script failed to load');
     const setup = w.document.createElement('script');
-    setup.textContent = `testTopicName=''; __T.questions = parseMoodleXML(DEMO_QUIZ_XML); startTest();`;
+    setup.textContent = `testTopicName=''; parseMoodleXML(DEMO_QUIZ_XML); startTest();`;
     w.document.body.appendChild(setup);
     fn(w, w.document, T);
 }
@@ -33,7 +33,7 @@ await run('crushmode=true', (w, d, T) => {
     ok(vis('checkAnswerBtn'), '«Проверить ответ» видна (одна кнопка)');
     ok(!d.getElementById('crushCheckBtn'), 'дубль «Проверить» удалён из DOM');
     ok(!vis('nextBtn') && !vis('finishBtn'), '«Вперёд»/«Завершить» скрыты');
-    ok(!vis('crushNextBtn'), '«Дальше →» скрыта до верного ответа');
+    ok(d.getElementById('crushNextBtn') === null, 'дубль «Дальше →» удалён из DOM');
     ok(T.currentQuestionIndex === 0, 'старт с первого вопроса');
 
     const q0 = T.questions[0];
@@ -44,7 +44,7 @@ await run('crushmode=true', (w, d, T) => {
     ok(T.crushErrors === 1, 'ошибка засчитана (1)');
     ok(d.querySelectorAll('.answer-option.incorrect').length === 1, 'неверный выбран красным');
     ok(d.querySelectorAll('.answer-option.correct').length === 0, 'правильный НЕ раскрыт');
-    ok(!vis('crushNextBtn'), '«Дальше →» всё ещё скрыта');
+    ok(!vis('nextBtn'), 'кнопка движения вперёд всё ещё скрыта');
 
     T.selectAnswer(wrongIdx2); d.getElementById('checkAnswerBtn').click();
     ok(T.crushErrors === 2, 'вторая ошибка засчитана');
@@ -59,14 +59,17 @@ await run('crushmode=true', (w, d, T) => {
     T.selectAnswer(ci); d.getElementById('checkAnswerBtn').click();
     ok(T.crushState === 'correct', 'верный ответ -> состояние CORRECT');
     ok(d.querySelectorAll('.answer-option.correct').length >= 1, 'верный вариант зелёный');
-    ok(vis('crushNextBtn'), '«Дальше →» открылась');
+    ok(vis('nextBtn') && d.getElementById('nextBtn').textContent.trim() === 'Дальше →', 'единая кнопка открылась с подписью «Дальше →»');
     ok(d.getElementById('checkAnswerBtn').disabled, '«Проверить ответ» отключена после верного');
 
-    T.goToQuestion(1);
-    ok(T.currentQuestionIndex === 0, 'прямой переход вперёд заблокирован (только через «Дальше →»)');
-    d.getElementById('crushNextBtn').click();
-    ok(T.currentQuestionIndex === 1, '«Дальше →» перешла к следующему вопросу');
-    ok(!vis('crushNextBtn'), 'на новом вопросе «Дальше →» снова скрыта');
+    d.getElementById('nextBtn').click();
+    ok(T.currentQuestionIndex === 1, 'единая кнопка «Дальше →» перешла к следующему вопросу');
+
+    // Проверка блокировки вперёд на новом (не последнем) вопросе:
+    // после перехода состояние снова ANSWERING — «Дальше →» скрыта
+    ok(T.currentQuestionIndex === 1 && !vis('nextBtn') && !vis('finishBtn'), 'на новом вопросе кнопка вперёд скрыта до верного ответа');
+    T.goToQuestion(2);
+    ok(T.currentQuestionIndex === 1, 'прямой переход вперёд заблокирован (только через «Дальше →»)');
     ok(JSON.stringify(T.questions.map(q => q.name)) === JSON.stringify(['Пример с формулой 1','Пример с формулой 2','Пример с таблицей']), 'вопросы идут в порядке расположения в тесте');
 });
 
@@ -86,7 +89,7 @@ await run('checkmode=true', (w, d, T) => {
     const vis = id => !d.getElementById(id).classList.contains('hidden');
     ok(vis('checkAnswerBtn'), 'кнопка «Проверить ответ» есть (одна)');
     ok(vis('prevBtn') && vis('nextBtn'), 'навигация Назад/Вперёд доступна');
-    ok(!vis('crushNextBtn'), '«Дальше →» не используется');
+    ok(d.getElementById('nextBtn').textContent.trim() === 'Вперёд →', 'единая кнопка вперёд подписана «Вперёд →» без дублей');
 
     const q0 = T.questions[0];
     const wi = q0.answers.findIndex(a => !a.isCorrect);

@@ -533,13 +533,14 @@
                 <div class="test-controls">
                     <!-- Единая панель управления (кнопки не дублируются):
                          «Назад» — только если разрешён возврат (не в CrushMode);
-                         «Проверить ответ» — в CheckMode и/или CrushMode (одна кнопка);
-                         «Дальше →» / «Вперёд →» / «Завершить тест» — одна активная кнопка движения -->
+                         «Проверить ответ» — одна кнопка проверки (CheckMode/CrushMode);
+                         «Вперёд →» — единая кнопка движения: в CrushMode появляется
+                         только после верного ответа (вместо неё скрыт «Завершить тест»
+                         на последнем вопросе) -->
                     <button id="prevBtn" class="btn btn-ghost" disabled>← Назад</button>
                     <button id="checkAnswerBtn" class="btn btn-dark hidden">🔍 Проверить ответ</button>
                     <button id="nextBtn" class="btn btn-primary">Вперёд →</button>
-                    <button id="finishBtn" class="btn btn-success">✓ Завершить тест</button>
-                    <button id="crushNextBtn" class="btn btn-success hidden">Дальше →</button>
+                    <button id="finishBtn" class="btn btn-success hidden">✓ Завершить тест</button>
                 </div>
             </section>
 
