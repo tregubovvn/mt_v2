@@ -114,7 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function cacheElements() {
     const ids = [
-        'quizName', 'flCheckMode', 'flShowHeader', 'flCrushMode',
+        'quizName', 'flCheckMode', 'flShowHeader', 'flCrushMode', 'flRandomMode',
         'xmlEditor', 'xmlPanel', 'resizer', 'editorContainer',
         'questionCard', 'questionNumber', 'qName', 'qShuffle', 'qNumbering', 'qText', 'fxBar',
         'answersContainer', 'questionTabs', 'prevBtn', 'nextBtn',
@@ -155,8 +155,8 @@ function bindEvents() {
     on('btnCopyTaskUrl', 'click', copyTaskUrl);
     on('btnOpenTaskTop', 'click', openTask);
 
-    // Флаги теста — пересобираем ссылку на тест
-    ['flCheckMode', 'flShowHeader', 'flCrushMode'].forEach(id => {
+    // Флаги теста (рядом с кнопкой «Открыть тест») — пересобираем ссылку на тест
+    ['flCheckMode', 'flShowHeader', 'flCrushMode', 'flRandomMode'].forEach(id => {
         els[id].addEventListener('change', updateGistLinkDisplay);
     });
 
@@ -1261,11 +1261,12 @@ async function createNewGist() {
     }
 }
 
-// Флаги приложения тестирования из чекбоксов строки названия
+// Флаги приложения тестирования из чекбоксов рядом с кнопкой «Открыть тест»
 function flagsString() {
     return (els.flCheckMode.checked ? '&checkmode=true' : '') +
         (els.flShowHeader.checked ? '&headershow=true' : '') +
-        (els.flCrushMode.checked ? '&crushmode=true' : '');
+        (els.flCrushMode.checked ? '&crushmode=true' : '') +
+        (els.flRandomMode.checked ? '&randommode=true' : '');
 }
 
 // Ссылка на тест в приложении тестирования (открывается по raw-ссылке XML; Gist или GitVerse)

@@ -62,7 +62,8 @@ let studentName = '';
 let pendingStartAfterName = false; // автозагрузка ждёт подтверждения ФИО
 let qrScannerActive = false;
 let videoStream = null;
-let checkMode = false;        // CheckMode=true   — мгновенная проверка + случайный порядок вопросов
+let checkMode = false;        // CheckMode=true   — на каждом вопросе кнопка «Проверить ответ» (в любом режиме)
+let randomMode = false;       // RandomMode=true  — случайный порядок вопросов
 let crushMode = false;        // CrushMode=true   — проверка при переходе, 3 ошибки = старт заново
 let headerShow = false;       // HeaderShow=true  — показывать заголовок вопроса из <name>
 let crushState = CRUSH_STATE.ANSWERING;
@@ -564,7 +565,7 @@ function renderTextWithMath(text) {
 }
 
 // ===== Перемешивание вопросов =====
-// Используется только в режиме CheckMode — там порядок вопросов случайный.
+// Используется только в режиме RandomMode — там порядок вопросов случайный.
 // В остальных режимах вопросы идут последовательно от первого
 function shuffleQuestions() {
     for (let i = questions.length - 1; i > 0; i--) {
@@ -599,9 +600,9 @@ function startTest() {
     timeSpent = 0;
     startTime = Date.now();
 
-    // Порядок вопросов: в CheckMode — случайный, в остальных режимах —
+    // Порядок вопросов: в RandomMode — случайный, в остальных режимах —
     // последовательно от первого (как в XML)
-    if (checkMode) shuffleQuestions();
+    if (randomMode) shuffleQuestions();
 
     // Варианты ответов перемешиваются во всех режимах
     shuffleAnswers();
@@ -690,8 +691,10 @@ function renderQuestion() {
         card.appendChild(option);
     });
 
-    // Блок проверки (CheckMode) — кнопка «Проверить ответ»
-    if (checkMode) {
+    // Блок проверки (CheckMode) — кнопка «Проверить ответ» на каждом вопросе.
+    // CheckMode совместим с любым режимом; в CrushMode проверка уже встроена
+    // в кнопку «Вперёд», поэтому там отдельная кнопка не нужна.
+    if (checkMode && !crushMode) {
         const checkBlock = document.createElement('div');
         checkBlock.className = 'check-block';
         const checkBtn = document.createElement('button');
@@ -765,13 +768,16 @@ function checkCurrentAnswer() {
 
     const isCorrect = q.answers[selected].isCorrect;
     q.isCorrect = isCorrect;
+    // Вопрос помечен проверенным всегда (в т.ч. в CheckMode — иначе «пройденные»
+    // вопросы не засчитываются в результатах, если проверка шла кнопкой)
+    questions[idx]._checked = true;
 
     // Подсветка вариантов
     const options = questionsContainer.querySelectorAll('.answer-option');
     options.forEach((el, i) => {
         el.classList.remove('correct', 'incorrect');
-        if (crushMode) {
-            // CrushMode: правильный ответ НЕ раскрываем.
+        if (crushMode && !checkMode) {
+            // CrushMode (без CheckMode): правильный ответ НЕ раскрываем.
             // Красным отмечаем только неверный выбор пользователя,
             // зелёным — верный вариант, который он нашёл сам
             if (isCorrect && q.answers[i].isCorrect) el.classList.add('correct');
@@ -783,9 +789,9 @@ function checkCurrentAnswer() {
         }
     });
 
-    // Тексты правильных ответов сохраняем только для CheckMode
-    // (там они выводятся в фидбэке). В CrushMode ответ не раскрываем.
-    if (!crushMode) {
+    // Тексты правильных ответов сохраняем для фидбэка (выводится в CheckMode;
+    // в чистом CrushMode ответ не раскрываем)
+    if (!crushMode || checkMode) {
         const correctTexts = q.answers.filter(a => a.isCorrect).map(a => a.text);
         feedbackStore[idx] = { ok: isCorrect, correctTexts };
     }
@@ -796,8 +802,6 @@ function checkCurrentAnswer() {
         if (fb) fillFeedback(fb, feedbackStore[idx]);
         const checkBtn = questionsContainer.querySelector('.check-block .btn');
         if (checkBtn) checkBtn.disabled = true;
-    } else {
-        questions[idx]._checked = true;
     }
 
     return isCorrect;
@@ -1087,12 +1091,12 @@ function init() {
     // Флаги режимов из URL
     checkMode = getUrlFlag('CheckMode');
     crushMode = getUrlFlag('CrushMode');
+    randomMode = getUrlFlag('RandomMode');
     headerShow = getUrlFlag('HeaderShow');
 
-    // CrushMode имеет приоритет над CheckMode
-    if (checkMode && crushMode) {
-        checkMode = false;
-    }
+    // CheckMode совместим с любым режимом: он только включает кнопку
+    // «Проверить ответ» на каждом вопросе. Случайный порядок вопросов
+    // задаётся отдельным флагом RandomMode.
 
     if (checkMode) checkBadge.classList.remove('hidden');
     if (crushMode) {

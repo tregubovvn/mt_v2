@@ -107,17 +107,19 @@
                 <!-- Название теста + флаги приложения тестирования + ссылка на тест -->
                 <div class="topic-row">
                     <input type="text" id="quizName" class="input-base topic-input" placeholder="Название теста (используется в описании GIST)…">
-                    <span class="task-flags" title="Флаги, передаваемые в приложение тестирования">
-                        <label class="switch-inline" title="checkmode=true — режим проверки ответов"><input type="checkbox" id="flCheckMode"><span class="switch-caption">CheckMode</span></label>
-                        <label class="switch-inline" title="headershow=true — показывать шапку теста"><input type="checkbox" id="flShowHeader"><span class="switch-caption">ShowHeader</span></label>
-                        <label class="switch-inline" title="crushmode=true — режим дробления"><input type="checkbox" id="flCrushMode"><span class="switch-caption">CrushMode</span></label>
-                    </span>
                     <span class="task-link-inline hidden" id="gistLinkContainer">
                         <a id="publishedTaskLink" class="url-text url-sm" href="#" target="_blank" rel="noopener" title="Ссылка на тест для студентов">—</a>
                         <button type="button" class="btn-icon" id="btnCopyTaskUrl" title="Скопировать ссылку на тест">
                             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                         </button>
                         <button type="button" class="btn btn-sm" id="btnOpenTaskTop" title="Открыть тест в приложении тестирования и скопировать ссылку">Открыть тест</button>
+                        <!-- Флаги приложения тестирования — рядом с кнопкой «Открыть тест» -->
+                        <span class="task-flags" title="Флаги, передаваемые в приложение тестирования (влияют на ссылку на тест)">
+                            <label class="switch-inline" title="checkmode=true — на каждом вопросе появляется кнопка «Проверить ответ» (работает в любом режиме)"><input type="checkbox" id="flCheckMode"><span class="switch-caption">CheckMode</span></label>
+                            <label class="switch-inline" title="headershow=true — показывать шапку теста"><input type="checkbox" id="flShowHeader"><span class="switch-caption">ShowHeader</span></label>
+                            <label class="switch-inline" title="crushmode=true — режим дробления"><input type="checkbox" id="flCrushMode"><span class="switch-caption">CrushMode</span></label>
+                            <label class="switch-inline" title="randommode=true — случайный порядок вопросов"><input type="checkbox" id="flRandomMode"><span class="switch-caption">RandomMode</span></label>
+                        </span>
                     </span>
                 </div>
 
@@ -278,7 +280,7 @@
                 <section class="settings-section">
                     <h4>Публикация и сохранение</h4>
                     <p class="hint"><strong>Автосохранение на диск компьютера</strong> включается переключателем рядом с кнопкой «💾 Сохранить в файл» и срабатывает только при изменениях в задании.</p>
-                    <p class="hint"><strong>Публикация</strong> выполняется только кнопкой «🚀 Публикация» (GitHub Gist или GitVerse) — после публикации возвращается ссылка на тест. Флаги CheckMode / ShowHeader / CrushMode подставляются в ссылку на тест.</p>
+                    <p class="hint"><strong>Публикация</strong> выполняется только кнопкой «🚀 Публикация» (GitHub Gist или GitVerse) — после публикации возвращается ссылка на тест. Флаги CheckMode / ShowHeader / CrushMode / RandomMode рядом с кнопкой «Открыть тест» подставляются в ссылку на тест. CheckMode только включает кнопку «Проверить ответ» на каждом вопросе (в любом режиме); случайный порядок вопросов задаётся флагом RandomMode.</p>
                 </section>
             </div>
 
