@@ -1,7 +1,7 @@
 # 📝 Moodle XML Тестирование с формулами
 
-https://tregubovvn.github.io/mt/index.html?name=https://tregubovvn.github.io/mt/it2026/1.xml
-https://tregubovvn.github.io/mt/index.html?name=https://tregubovvn.github.io/mt/it2026/1.xml&checkmode=true
+https://tregubovvn.github.io/mt_v2/index.html?name=https://tregubovvn.github.io/mt/it2026/1.xml
+https://tregubovvn.github.io/mt_v2/index.html?name=https://tregubovvn.github.io/mt/it2026/1.xml&checkmode=true
 
 
 Редактор: 
