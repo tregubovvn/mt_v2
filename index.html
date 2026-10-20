@@ -218,6 +218,16 @@
         .answer-option.correct .answer-letter   { background: var(--success); color: #fff; }
         .answer-option.incorrect .answer-letter { background: var(--danger);  color: #fff; }
 
+        /* CrushMode: неверный ответ — лёгкая анимация «ошибки» */
+        @keyframes shakeX {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-6px); }
+            40% { transform: translateX(6px); }
+            60% { transform: translateX(-4px); }
+            80% { transform: translateX(4px); }
+        }
+        .answer-option.incorrect { animation: shakeX .35s ease; }
+
         .mode-pill {
             display: inline-flex; align-items: center; gap: 6px;
             padding: 9px 16px; border-radius: 999px;
@@ -519,8 +529,12 @@
 
                 <div class="test-controls">
                     <button id="prevBtn" class="btn btn-ghost" disabled>← Назад</button>
+                    <!-- Обычный режим: Вперёд / Завершить -->
                     <button id="nextBtn" class="btn btn-primary">Вперёд →</button>
                     <button id="finishBtn" class="btn btn-success">✓ Завершить тест</button>
+                    <!-- CrushMode: Проверить; «Дальше →» появляется после верного ответа -->
+                    <button id="crushCheckBtn" class="btn btn-primary hidden">🔍 Проверить</button>
+                    <button id="crushNextBtn" class="btn btn-success hidden">Дальше →</button>
                 </div>
             </section>
 

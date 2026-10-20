@@ -14,8 +14,8 @@ const GRADE_THRESHOLDS = [          // процент правильных от�
     { min: 50, grade: 3 },
 ];
 
-// Состояния кнопки «Вперёд» в CrushMode
-const CRUSH_STATE = { ANSWERING: 'answering', ADVANCING: 'advancing', RESTART: 'restart' };
+// Состояния сессии CrushMode
+const CRUSH_STATE = { ANSWERING: 'answering', CORRECT: 'correct', RESTART: 'restart' };
 
 // Демо-тест (вставляется в редактор/загружается по кнопке «Демо-тест»)
 const DEMO_QUIZ_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -120,6 +120,8 @@ const checkBadge = document.getElementById('checkBadge');
 const crushBadge = document.getElementById('crushBadge');
 const headerBadge = document.getElementById('headerBadge');
 const crushAttemptsPill = document.getElementById('crushAttemptsPill');
+const crushCheckBtn = document.getElementById('crushCheckBtn');   // «Проверить» (CrushMode)
+const crushNextBtn = document.getElementById('crushNextBtn');     // «Дальше →» (CrushMode, после верного ответа)
 
 // ===== Вспомогательные функции =====
 function isAnyOverlayOpen() {
@@ -622,12 +624,33 @@ function startTest() {
     testSection.classList.remove('hidden');
 
     totalQuestionsElement.textContent = questions.length;
-    nextBtn.textContent = crushMode ? 'Проверить →' : 'Вперёд →';
     updateCrushAttemptsPill();
+    updateNavigation();
 
     renderQuestion();
     updateScrollLock();
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ===== Панель управления навигацией =====
+// В CrushMode показываются кнопки «Проверить» и «Дальше →» (последняя — только
+// после верного ответа), а обычные «Вперёд»/«Завершить» скрываются.
+// В остальных режимах — привычные «Назад / Вперёд / Завершить тест».
+function updateNavigation() {
+    if (crushMode) {
+        crushCheckBtn.classList.remove('hidden');
+        crushNextBtn.classList.toggle('hidden', crushState !== CRUSH_STATE.CORRECT);
+        prevBtn.classList.remove('hidden');
+        nextBtn.classList.add('hidden');
+        finishBtn.classList.add('hidden');
+    } else {
+        crushCheckBtn.classList.add('hidden');
+        crushNextBtn.classList.add('hidden');
+        prevBtn.classList.remove('hidden');
+        nextBtn.classList.remove('hidden');
+        finishBtn.classList.remove('hidden');
+        nextBtn.disabled = currentQuestionIndex === questions.length - 1;
+    }
 }
 
 function updateCrushAttemptsPill() {
@@ -692,17 +715,21 @@ function renderQuestion() {
         card.appendChild(option);
     });
 
-    // Блок проверки (CheckMode) — кнопка «Проверить ответ» на каждом вопросе.
-    // CheckMode совместим с любым режимом; в CrushMode проверка уже встроена
-    // в кнопку «Вперёд», поэтому там отдельная кнопка не нужна.
-    if (checkMode && !crushMode) {
+    // Блок проверки — кнопка «Проверить ответ» на каждом вопросе.
+    // CheckMode включает её в любом режиме (в т.ч. вместе с CrushMode).
+    if (checkMode) {
         const checkBlock = document.createElement('div');
         checkBlock.className = 'check-block';
         const checkBtn = document.createElement('button');
         checkBtn.className = 'btn btn-dark';
         checkBtn.textContent = '🔍 Проверить ответ';
-        checkBtn.addEventListener('click', checkCurrentAnswer);
-        if (isChecked(currentQuestionIndex)) checkBtn.disabled = true;
+        checkBtn.addEventListener('click', () => {
+            if (crushMode) handleCrushCheck();
+            else checkCurrentAnswer();
+        });
+        // В обычном CheckMode после проверки менять ответ нельзя;
+        // в CrushMode проверка открывает «Дальше →», отдельная блокировка не нужна
+        if (!crushMode && isChecked(currentQuestionIndex)) checkBtn.disabled = true;
         checkBlock.appendChild(checkBtn);
 
         const feedback = document.createElement('div');
@@ -719,7 +746,7 @@ function renderQuestion() {
     currentQuestionElement.textContent = currentQuestionIndex + 1;
     progressFill.style.width = ((currentQuestionIndex + 1) / questions.length * 100) + '%';
     prevBtn.disabled = currentQuestionIndex === 0;
-    nextBtn.disabled = currentQuestionIndex === questions.length - 1 && !crushMode;
+    updateNavigation();
 
     applyMathJax();
 }
@@ -735,9 +762,11 @@ function q_wasChecked(idx) {
 
 // ===== Выбор варианта ответа =====
 function selectAnswer(i) {
-    // В CheckMode после проверки менять ответ нельзя
-    if (checkMode && checkedQuestions[currentQuestionIndex]) return;
-    if (crushMode && (crushState === 'restart' || crushState === 'advancing')) return;
+    // В CheckMode (без CrushMode) после проверки менять ответ нельзя
+    if (checkMode && !crushMode && checkedQuestions[currentQuestionIndex]) return;
+    // В CrushMode: выбор заблокирован только после верного ответа (до «Дальше →»)
+    // и при исчерпании попыток
+    if (crushMode && crushState !== CRUSH_STATE.ANSWERING) return;
 
     userAnswers[currentQuestionIndex] = i;
 
@@ -745,7 +774,7 @@ function selectAnswer(i) {
     options.forEach((el, idx) => {
         el.classList.toggle('selected', idx === i);
         // В CheckMode классы correct/incorrect сохраняются после проверки
-        if (checkMode && checkedQuestions[currentQuestionIndex]) return;
+        if (checkMode && !crushMode && checkedQuestions[currentQuestionIndex]) return;
         if (crushMode && q_wasChecked(currentQuestionIndex)) {
             // при повторном выборе до новой проверки снимаем старую разметку
             el.classList.remove('correct', 'incorrect');
@@ -784,9 +813,14 @@ function checkCurrentAnswer() {
             if (isCorrect && q.answers[i].isCorrect) el.classList.add('correct');
             else if (!isCorrect && i === selected) el.classList.add('incorrect');
         } else {
-            // Обычный режим / CheckMode: показываем правильный вариант
-            if (q.answers[i].isCorrect) el.classList.add('correct');
-            else if (i === selected) el.classList.add('incorrect');
+            // Обычный режим / CheckMode: красным — неверный выбор;
+            // зелёным — правильный вариант (в чистом CrushMode с кнопкой
+            // «Проверить» подсказку не показываем, пока ответ не найден)
+            if (i === selected) {
+                el.classList.add(isCorrect ? 'correct' : 'incorrect');
+            } else if (q.answers[i].isCorrect && !(crushMode && !isCorrect)) {
+                el.classList.add('correct');
+            }
         }
     });
 
@@ -836,42 +870,36 @@ function restoreFeedback(idx, container) {
 function goToQuestion(idx) {
     if (idx < 0 || idx >= questions.length) return;
     currentQuestionIndex = idx;
+    // В CrushMode возврат к непроверенному вопросу — снова можно отвечать;
+    // состояние «3 ошибки» снимается только перезапуском сессии
+    if (crushMode && crushState === CRUSH_STATE.CORRECT && !q_isCrushPassed(idx)) {
+        crushState = CRUSH_STATE.ANSWERING;
+    }
     renderQuestion();
 }
 
+// Вопрос «пройден» в CrushMode, если на него уже получен верный ответ
+function q_isCrushPassed(idx) {
+    return questions[idx]._checked === true && questions[idx].isCorrect === true;
+}
+
 function handleNext() {
-    if (crushMode) {
-        handleNextCrush();
-        return;
-    }
     if (currentQuestionIndex < questions.length - 1) {
         goToQuestion(currentQuestionIndex + 1);
     }
 }
 
-// CrushMode: «Вперёд» = проверить и перейти
-function handleNextCrush() {
-    // После 3 ошибок — кнопка перезапускает сессию
-    if (crushState === 'restart') {
-        restartCrushSession();
-        return;
-    }
-    // Идёт автоматический переход после верного ответа — игнорируем клики
-    if (crushState === 'advancing') return;
+// ===== CrushMode =====
+// Кнопка «Проверить»: верный ответ -> зелёная подсветка + появляется «Дальше →»;
+// неверный -> красная подсветка выбранного варианта, можно выбрать другой ответ
+// и проверить снова. Три ошибки за сессию -> возврат к началу теста.
+function handleCrushCheck() {
+    // После 3 ошибок проверка блокируется до перезапуска сессии
+    if (crushState === CRUSH_STATE.RESTART) return;
+    // Ответ уже верный — повторная проверка не нужна
+    if (crushState === CRUSH_STATE.CORRECT) return;
 
-    const q = questions[currentQuestionIndex];
-
-    // Уже отвечен верно — просто идём дальше
-    if (q_wasChecked(currentQuestionIndex) && q.isCorrect) {
-        if (currentQuestionIndex < questions.length - 1) {
-            goToQuestion(currentQuestionIndex + 1);
-        } else {
-            finishTest();
-        }
-        return;
-    }
-
-    if (userAnswers[currentQuestionIndex] === null) {
+    if (userAnswers[currentQuestionIndex] === null || userAnswers[currentQuestionIndex] === undefined) {
         alert('Сначала выберите вариант ответа');
         return;
     }
@@ -879,47 +907,52 @@ function handleNextCrush() {
     const isCorrect = checkCurrentAnswer();
 
     if (isCorrect) {
-        // Верный ответ — зелёная подсветка уже стоит, переходим дальше
-        crushState = 'advancing';
-        nextBtn.textContent = 'Вперёд →';
-        setTimeout(() => {
-            crushState = 'answering';
-            if (currentQuestionIndex < questions.length - 1) {
-                goToQuestion(currentQuestionIndex + 1);
-            } else {
-                finishTest();
-            }
-        }, 700);
+        // Верно: вариант подсвечен зелёным, открываем кнопку «Дальше →»
+        crushState = CRUSH_STATE.CORRECT;
+        updateNavigation();
     } else {
+        // Неверно: вариант подсвечен красным, доступ к выбору другого ответа открыт
         crushErrors++;
         updateCrushAttemptsPill();
 
         if (crushErrors >= CRUSH_MAX_ERRORS) {
-            crushState = 'restart';
-            nextBtn.textContent = '⟲ Начать заново';
+            crushState = CRUSH_STATE.RESTART;
+            updateNavigation();
             alert(`Допущено ${CRUSH_MAX_ERRORS} ошибки. Тест начнётся заново!`);
+            restartCrushSession();
         } else {
             // Правильный ответ не раскрываем — только сообщение об ошибке
-            alert(`Неверно! Попробуйте ещё раз. Осталось попыток: ${CRUSH_MAX_ERRORS - crushErrors}`);
+            alert(`Неверно! Выберите другой вариант и проверьте снова. Осталось попыток: ${CRUSH_MAX_ERRORS - crushErrors}`);
         }
     }
 }
 
-// Перезапуск сессии в CrushMode
+// Кнопка «Дальше →»: переход к следующему вопросу (или завершение на последнем)
+function handleCrushNext() {
+    if (crushState !== CRUSH_STATE.CORRECT) return;
+    if (currentQuestionIndex < questions.length - 1) {
+        crushState = CRUSH_STATE.ANSWERING;
+        goToQuestion(currentQuestionIndex + 1);
+    } else {
+        finishTest();
+    }
+}
+
+// Перезапуск сессии в CrushMode (после трёх ошибок): возврат к первому вопросу
 function restartCrushSession() {
     crushErrors = 0;
-    crushState = 'answering';
+    crushState = CRUSH_STATE.ANSWERING;
     userAnswers = new Array(questions.length).fill(null);
     checkedQuestions = new Array(questions.length).fill(false);
     feedbackStore = new Array(questions.length).fill(null);
     questions.forEach(q => { q.isCorrect = false; q._checked = false; });
     currentQuestionIndex = 0;
-    nextBtn.textContent = 'Проверить →';
     updateCrushAttemptsPill();
     // Вопросы остаются в прежнем порядке (последовательность),
     // варианты ответов перемешиваются заново
     shuffleAnswers();
     renderQuestion();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ===== Итоговая сводка (последний шаг) =====
@@ -1083,6 +1116,8 @@ urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleUrlLoad
 prevBtn.addEventListener('click', () => goToQuestion(currentQuestionIndex - 1));
 nextBtn.addEventListener('click', handleNext);
 finishBtn.addEventListener('click', finishTest);
+crushCheckBtn.addEventListener('click', handleCrushCheck);
+crushNextBtn.addEventListener('click', handleCrushNext);
 
 restartBtn.addEventListener('click', () => startTest());
 changeNameBtn.addEventListener('click', openNameOverlay);

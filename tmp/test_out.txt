@@ -1,0 +1,30 @@
+
+=== CheckMode=False CrushMode=False RandomMode=False ===
+RESULTS OK: 0% | Оценка: 2
+JS errors: []
+
+=== CheckMode=True CrushMode=False RandomMode=False ===
+RESULTS OK: 0% | Оценка: 2
+JS errors: []
+
+=== CheckMode=False CrushMode=True RandomMode=False ===
+RESULTS OK: 0% | Оценка: 2
+JS errors: []
+
+=== CheckMode=True CrushMode=True RandomMode=False ===
+RESULTS OK: 33% | Оценка: 2
+JS errors: []
+
+=== CheckMode=False CrushMode=False RandomMode=True ===
+RESULTS OK: 0% | Оценка: 2
+JS errors: []
+
+=== CheckMode=True CrushMode=False RandomMode=True ===
+RESULTS OK: 33% | Оценка: 2
+JS errors: []
+
+=== CheckMode=True CrushMode=True RandomMode=True ===
+RESULTS OK: 0% | Оценка: 2
+JS errors: []
+
+ALL PASS
