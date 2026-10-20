@@ -120,8 +120,8 @@ const checkBadge = document.getElementById('checkBadge');
 const crushBadge = document.getElementById('crushBadge');
 const headerBadge = document.getElementById('headerBadge');
 const crushAttemptsPill = document.getElementById('crushAttemptsPill');
-const crushCheckBtn = document.getElementById('crushCheckBtn');   // «Проверить» (CrushMode)
-const crushNextBtn = document.getElementById('crushNextBtn');     // «Дальше →» (CrushMode, после верного ответа)
+const checkAnswerBtn = document.getElementById('checkAnswerBtn'); // «Проверить ответ» — единая кнопка проверки (CheckMode и/или CrushMode)
+const crushNextBtn = document.getElementById('crushNextBtn');     // «Дальше →» (CrushMode, появляется только после верного ответа)
 
 // ===== Вспомогательные функции =====
 function isAnyOverlayOpen() {
@@ -603,9 +603,9 @@ function startTest() {
     timeSpent = 0;
     startTime = Date.now();
 
-    // Порядок вопросов: в RandomMode — случайный, в остальных режимах —
-    // последовательно от первого (как в XML)
-    if (randomMode) shuffleQuestions();
+    // Порядок вопросов: в CrushMode — строго по порядку расположения в тесте;
+    // в RandomMode (без CrushMode) — случайный; иначе последовательно от первого
+    if (randomMode && !crushMode) shuffleQuestions();
 
     // Варианты ответов перемешиваются во всех режимах
     shuffleAnswers();
@@ -633,23 +633,40 @@ function startTest() {
 }
 
 // ===== Панель управления навигацией =====
-// В CrushMode показываются кнопки «Проверить» и «Дальше →» (последняя — только
-// после верного ответа), а обычные «Вперёд»/«Завершить» скрываются.
-// В остальных режимах — привычные «Назад / Вперёд / Завершить тест».
+// Единая логика без дублирующихся кнопок:
+//   «Назад»            — только если возврат разрешён (не в CrushMode);
+//   «Проверить ответ»  — одна кнопка, показывается в CheckMode и/или CrushMode;
+//   «Дальше →»         — в CrushMode, только после верного ответа;
+//   «Вперёд →»         — обычный режим / CheckMode (в CrushMode скрыта);
+//   «Завершить тест»   — на последнем вопросе (в CrushMode — после верного ответа).
 function updateNavigation() {
+    const last = currentQuestionIndex === questions.length - 1;
+
+    // Возврат назад: в CrushMode двигаться можно только вперёд (после верного ответа)
+    prevBtn.classList.toggle('hidden', crushMode);
+    prevBtn.disabled = currentQuestionIndex === 0;
+
+    // Единая кнопка проверки (CheckMode и/или CrushMode)
+    checkAnswerBtn.classList.toggle('hidden', !(checkMode || crushMode));
+    if (checkMode || crushMode) {
+        if (crushMode) {
+            // в CrushMode проверка активна до получения верного ответа
+            checkAnswerBtn.disabled = crushState !== CRUSH_STATE.ANSWERING;
+        } else {
+            // в CheckMode после проверки вопрос зафиксирован
+            checkAnswerBtn.disabled = checkedQuestions[currentQuestionIndex] === true;
+        }
+    }
+
     if (crushMode) {
-        crushCheckBtn.classList.remove('hidden');
+        // «Дальше →» открывается только после верного ответа
         crushNextBtn.classList.toggle('hidden', crushState !== CRUSH_STATE.CORRECT);
-        prevBtn.classList.remove('hidden');
         nextBtn.classList.add('hidden');
         finishBtn.classList.add('hidden');
     } else {
-        crushCheckBtn.classList.add('hidden');
         crushNextBtn.classList.add('hidden');
-        prevBtn.classList.remove('hidden');
-        nextBtn.classList.remove('hidden');
-        finishBtn.classList.remove('hidden');
-        nextBtn.disabled = currentQuestionIndex === questions.length - 1;
+        nextBtn.classList.toggle('hidden', last);
+        finishBtn.classList.toggle('hidden', !last);
     }
 }
 
@@ -681,6 +698,8 @@ function renderQuestion() {
     card.appendChild(textEl);
 
     // Варианты ответа
+    const locked = (checkMode && !crushMode && checkedQuestions[currentQuestionIndex]) ||
+                   (crushMode && crushState !== CRUSH_STATE.ANSWERING);
     q.answers.forEach((answer, i) => {
         const option = document.createElement('div');
         option.className = 'answer-option';
@@ -706,38 +725,25 @@ function renderQuestion() {
                 if (q.isCorrect && answer.isCorrect) option.classList.add('correct');
                 else if (!q.isCorrect && i === sel) option.classList.add('incorrect');
             } else {
+                // CheckMode / обычный режим: выбранный вариант — зелёный (верно)
+                // или красный (ошибка фиксируется), правильный подсвечивается зелёным
+                if (i === sel) option.classList.add(q.answers[i].isCorrect ? 'correct' : 'incorrect');
                 if (answer.isCorrect) option.classList.add('correct');
-                else if (i === sel) option.classList.add('incorrect');
             }
         }
 
+        if (locked) option.classList.add('locked');
         option.addEventListener('click', () => selectAnswer(i));
         card.appendChild(option);
     });
 
-    // Блок проверки — кнопка «Проверить ответ» на каждом вопросе.
-    // CheckMode включает её в любом режиме (в т.ч. вместе с CrushMode).
-    if (checkMode) {
-        const checkBlock = document.createElement('div');
-        checkBlock.className = 'check-block';
-        const checkBtn = document.createElement('button');
-        checkBtn.className = 'btn btn-dark';
-        checkBtn.textContent = '🔍 Проверить ответ';
-        checkBtn.addEventListener('click', () => {
-            if (crushMode) handleCrushCheck();
-            else checkCurrentAnswer();
-        });
-        // В обычном CheckMode после проверки менять ответ нельзя;
-        // в CrushMode проверка открывает «Дальше →», отдельная блокировка не нужна
-        if (!crushMode && isChecked(currentQuestionIndex)) checkBtn.disabled = true;
-        checkBlock.appendChild(checkBtn);
-
+    // Фидбек по проверенному вопросу (CheckMode) — выводится под вариантами.
+    // Кнопка «Проверить ответ» находится внизу панели (единая, без дублей).
+    if (checkMode && !crushMode && isChecked(currentQuestionIndex)) {
         const feedback = document.createElement('div');
         feedback.className = 'check-feedback';
         restoreFeedback(currentQuestionIndex, feedback);
-        checkBlock.appendChild(feedback);
-
-        card.appendChild(checkBlock);
+        card.appendChild(feedback);
     }
 
     questionsContainer.appendChild(card);
@@ -762,10 +768,9 @@ function q_wasChecked(idx) {
 
 // ===== Выбор варианта ответа =====
 function selectAnswer(i) {
-    // В CheckMode (без CrushMode) после проверки менять ответ нельзя
+    // CheckMode (без CrushMode): после проверки ошибка зафиксирована, менять ответ нельзя
     if (checkMode && !crushMode && checkedQuestions[currentQuestionIndex]) return;
-    // В CrushMode: выбор заблокирован только после верного ответа (до «Дальше →»)
-    // и при исчерпании попыток
+    // CrushMode: выбор заблокирован только после верного ответа (до «Дальше →»)
     if (crushMode && crushState !== CRUSH_STATE.ANSWERING) return;
 
     userAnswers[currentQuestionIndex] = i;
@@ -773,13 +778,20 @@ function selectAnswer(i) {
     const options = questionsContainer.querySelectorAll('.answer-option');
     options.forEach((el, idx) => {
         el.classList.toggle('selected', idx === i);
-        // В CheckMode классы correct/incorrect сохраняются после проверки
-        if (checkMode && !crushMode && checkedQuestions[currentQuestionIndex]) return;
-        if (crushMode && q_wasChecked(currentQuestionIndex)) {
-            // при повторном выборе до новой проверки снимаем старую разметку
+        if (crushMode) {
+            // при повторном выборе до новой проверки снимаем старую подсветку
             el.classList.remove('correct', 'incorrect');
         }
     });
+}
+
+// ===== Единая кнопка «Проверить ответ» =====
+// В CrushMode работает по правилам режима дробления (верно -> зелёный + «Дальше →»,
+// неверно -> красный + повторный выбор, 3 ошибки -> возврат к началу).
+// В CheckMode фиксация ответа и раскрытие правильного обрабатываются в checkCurrentAnswer.
+function handleCheckClick() {
+    if (crushMode) handleCrushCheck();
+    else checkCurrentAnswer();
 }
 
 // ===== Проверка ответа =====
@@ -789,57 +801,72 @@ function checkCurrentAnswer() {
     const selected = userAnswers[idx];
 
     if (selected === null || selected === undefined) {
-        if (checkMode) {
-            const fb = questionsContainer.querySelector('.check-feedback');
-            if (fb) fb.innerHTML = '<span style="color:#b45309; font-weight:600;">⚠ Сначала выберите вариант ответа</span>';
-        }
+        showNoSelectionHint();
         return false;
     }
 
     const isCorrect = q.answers[selected].isCorrect;
     q.isCorrect = isCorrect;
-    // Вопрос помечен проверенным всегда (в т.ч. в CheckMode — иначе «пройденные»
-    // вопросы не засчитываются в результатах, если проверка шла кнопкой)
-    questions[idx]._checked = true;
+    // Вопрос помечен проверенным всегда — так «пройденные» вопросы корректно
+    // засчитываются в результатах, если проверка шла кнопкой
+    q._checked = true;
 
     // Подсветка вариантов
     const options = questionsContainer.querySelectorAll('.answer-option');
     options.forEach((el, i) => {
         el.classList.remove('correct', 'incorrect');
-        if (crushMode && !checkMode) {
-            // CrushMode (без CheckMode): правильный ответ НЕ раскрываем.
-            // Красным отмечаем только неверный выбор пользователя,
-            // зелёным — верный вариант, который он нашёл сам
+        if (crushMode) {
+            // CrushMode: правильный ответ НЕ раскрываем до того, как студент
+            // найдёт его сам. Зелёным — найденный верный вариант, красным — неверный выбор
             if (isCorrect && q.answers[i].isCorrect) el.classList.add('correct');
             else if (!isCorrect && i === selected) el.classList.add('incorrect');
         } else {
-            // Обычный режим / CheckMode: красным — неверный выбор;
-            // зелёным — правильный вариант (в чистом CrushMode с кнопкой
-            // «Проверить» подсказку не показываем, пока ответ не найден)
-            if (i === selected) {
-                el.classList.add(isCorrect ? 'correct' : 'incorrect');
-            } else if (q.answers[i].isCorrect && !(crushMode && !isCorrect)) {
-                el.classList.add('correct');
-            }
+            // CheckMode / обычный режим: выбранный вариант — зелёный (верно) или
+            // красный (ошибка фиксируется), правильный подсвечивается зелёным
+            if (i === selected) el.classList.add(isCorrect ? 'correct' : 'incorrect');
+            if (q.answers[i].isCorrect) el.classList.add('correct');
         }
     });
 
     // Тексты правильных ответов сохраняем для фидбэка (выводится в CheckMode;
-    // в чистом CrushMode ответ не раскрываем)
-    if (!crushMode || checkMode) {
+    // в CrushMode ответ не раскрываем)
+    if (!crushMode) {
         const correctTexts = q.answers.filter(a => a.isCorrect).map(a => a.text);
         feedbackStore[idx] = { ok: isCorrect, correctTexts };
     }
 
-    if (checkMode) {
+    if (checkMode && !crushMode) {
+        // CheckMode: ошибка фиксируется, изменить ответ нельзя;
+        // количество ошибок не ограничено, переход дальше открыт
         checkedQuestions[idx] = true;
-        const fb = questionsContainer.querySelector('.check-feedback');
-        if (fb) fillFeedback(fb, feedbackStore[idx]);
-        const checkBtn = questionsContainer.querySelector('.check-block .btn');
-        if (checkBtn) checkBtn.disabled = true;
+        renderCheckFeedback();
     }
 
+    updateNavigation();
     return isCorrect;
+}
+
+// Сообщение «сначала выберите вариант» — в фидбэке (CheckMode) или всплывающе
+function showNoSelectionHint() {
+    const fb = questionsContainer.querySelector('.check-feedback');
+    if (fb) {
+        fb.innerHTML = '<span style="color:#b45309; font-weight:600;">⚠ Сначала выберите вариант ответа</span>';
+    } else {
+        alert('Сначала выберите вариант ответа');
+    }
+}
+
+// Вывод фидбэка под вариантами ответа (CheckMode без CrushMode)
+function renderCheckFeedback() {
+    let fb = questionsContainer.querySelector('.check-feedback');
+    if (!fb) {
+        const card = questionsContainer.querySelector('.question');
+        if (!card) return;
+        fb = document.createElement('div');
+        fb.className = 'check-feedback';
+        card.appendChild(fb);
+    }
+    fillFeedback(fb, feedbackStore[currentQuestionIndex]);
 }
 
 function fillFeedback(container, data) {
@@ -869,12 +896,10 @@ function restoreFeedback(idx, container) {
 // ===== Навигация =====
 function goToQuestion(idx) {
     if (idx < 0 || idx >= questions.length) return;
+    // В CrushMode переход только вперёд и только после верного ответа
+    // (кнопка «Назад» скрыта, «Вперёд» заменена на «Дальше →»)
+    if (crushMode && idx > currentQuestionIndex && crushState !== CRUSH_STATE.CORRECT) return;
     currentQuestionIndex = idx;
-    // В CrushMode возврат к непроверенному вопросу — снова можно отвечать;
-    // состояние «3 ошибки» снимается только перезапуском сессии
-    if (crushMode && crushState === CRUSH_STATE.CORRECT && !q_isCrushPassed(idx)) {
-        crushState = CRUSH_STATE.ANSWERING;
-    }
     renderQuestion();
 }
 
@@ -890,9 +915,11 @@ function handleNext() {
 }
 
 // ===== CrushMode =====
-// Кнопка «Проверить»: верный ответ -> зелёная подсветка + появляется «Дальше →»;
-// неверный -> красная подсветка выбранного варианта, можно выбрать другой ответ
-// и проверить снова. Три ошибки за сессию -> возврат к началу теста.
+// Единая кнопка «Проверить ответ»: верный ответ -> зелёная подсветка + открывается
+// «Дальше →»; неверный -> красная подсветка выбранного варианта, можно выбрать другой
+// ответ и проверить снова. Три ошибки за сессию -> возврат к началу теста.
+// Вопросы идут в порядке расположения в тесте, варианты ответов перемешаны,
+// возврат к предыдущим вопросам невозможен (только «назад» нельзя).
 function handleCrushCheck() {
     // После 3 ошибок проверка блокируется до перезапуска сессии
     if (crushState === CRUSH_STATE.RESTART) return;
@@ -927,7 +954,8 @@ function handleCrushCheck() {
     }
 }
 
-// Кнопка «Дальше →»: переход к следующему вопросу (или завершение на последнем)
+// Кнопка «Дальше →»: переход к следующему вопросу (или завершение на последнем).
+// Переход возможен только после верного ответа (crushState === CORRECT).
 function handleCrushNext() {
     if (crushState !== CRUSH_STATE.CORRECT) return;
     if (currentQuestionIndex < questions.length - 1) {
@@ -1116,7 +1144,7 @@ urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleUrlLoad
 prevBtn.addEventListener('click', () => goToQuestion(currentQuestionIndex - 1));
 nextBtn.addEventListener('click', handleNext);
 finishBtn.addEventListener('click', finishTest);
-crushCheckBtn.addEventListener('click', handleCrushCheck);
+checkAnswerBtn.addEventListener('click', handleCheckClick);
 crushNextBtn.addEventListener('click', handleCrushNext);
 
 restartBtn.addEventListener('click', () => startTest());

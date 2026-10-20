@@ -1278,7 +1278,9 @@ async function createNewGist() {
     }
 }
 
-// Флаги приложения тестирования из чекбоксов рядом с кнопкой «Открыть тест»
+// Флаги приложения тестирования из чекбоксов рядом с кнопкой «Открыть тест».
+// Названия согласованы с приложением mt_v2 (app.js getUrlFlag): checkmode,
+// crushmode, randommode, headershow.
 function flagsString() {
     return (els.flCheckMode.checked ? '&checkmode=true' : '') +
         (els.flShowHeader.checked ? '&headershow=true' : '') +
@@ -1295,6 +1297,7 @@ function buildTaskUrl() {
         raw = state.rawUrl;
     }
     if (!raw) return state.gistUrl || '';
+    // Порядок параметров: сначала XML (name), затем флаги режимов
     return TEST_APP_BASE_URL + '?name=' + encodeURIComponent(raw) + flagsString();
 }
 
