@@ -118,6 +118,8 @@ function cacheElements() {
         'xmlEditor', 'xmlPanel', 'resizer', 'editorContainer',
         'questionCard', 'questionNumber', 'qName', 'qShuffle', 'qNumbering', 'qText', 'fxBar',
         'answersContainer', 'questionTabs', 'prevBtn', 'nextBtn',
+        // Навигация под окном предпросмотра (дубль навигации редактора)
+        'pvNavBar', 'pvPrevBtn', 'pvNextBtn', 'pvQuestionTabs', 'pvQuestionNumber', 'previewCard',
         'statusText', 'statusMeta', 'toast', 'gistLinkContainer', 'publishedTaskLink',
         'loadModal', 'loadGistId', 'settingsModal', 'publishMenu', 'promptBar', 'promptText', 'publishCheckNote',
         'reviewPanel', 'reviewBody', 'reviewSummary', 'btnToggleReview',
@@ -191,6 +193,8 @@ function bindEvents() {
     els.qName.addEventListener('input', () => {
         currentQuestion().name = els.qName.value;
         updateXmlOutput();
+        // Обновляем подсказки вкладок навигации (в т.ч. под предпросмотром) без перезаписи полей
+        updateNavigation();
     });
     els.qText.addEventListener('input', () => {
         currentQuestion().text = els.qText.value;
@@ -210,8 +214,11 @@ function bindEvents() {
         state.quizData.name = els.quizName.value;
         updateXmlOutput();
     });
-    on('prevBtn', 'click', prevQuestion);
-    on('nextBtn', 'click', nextQuestion);
+    on('prevBtn', 'click', () => { prevQuestion(); scrollAfterQuestionChange(); });
+    on('nextBtn', 'click', () => { nextQuestion(); scrollAfterQuestionChange(); });
+    // Навигация под предпросмотром — то же пролистывание вопросов (быстрый просмотр)
+    on('pvPrevBtn', 'click', () => { prevQuestion(); scrollAfterQuestionChange(); });
+    on('pvNextBtn', 'click', () => { nextQuestion(); scrollAfterQuestionChange(); });
     on('btnAddQuestion', 'click', addQuestion);
     on('btnDuplicateQuestion', 'click', duplicateQuestion);
     on('btnDeleteQuestion', 'click', deleteCurrentQuestion);
@@ -636,6 +643,22 @@ function updateNavigation() {
     els.questionTabs.querySelectorAll('button').forEach(b => {
         b.addEventListener('click', () => goToQuestion(+b.dataset.q));
     });
+
+    // Дубль навигации под окном предпросмотра — позволяет быстро пролистывать
+    // все вопросы в режиме предпросмотра, не возвращаясь к редактору.
+    if (els.pvPrevBtn) els.pvPrevBtn.disabled = state.currentQuestionIndex === 0;
+    if (els.pvNextBtn) els.pvNextBtn.disabled = state.currentQuestionIndex >= state.quizData.questions.length - 1;
+    if (els.pvQuestionNumber) {
+        els.pvQuestionNumber.textContent = state.currentQuestionIndex + 1;
+    }
+    if (els.pvQuestionTabs) {
+        els.pvQuestionTabs.innerHTML = state.quizData.questions.map((q, i) =>
+            `<button type="button" class="nav-btn ${i === state.currentQuestionIndex ? 'active' : ''}" data-q="${i}" title="${escAttr(q.name)}">${i + 1}</button>`
+        ).join('');
+        els.pvQuestionTabs.querySelectorAll('button').forEach(b => {
+            b.addEventListener('click', () => goToQuestion(+b.dataset.q));
+        });
+    }
 }
 
 // ============================================================
@@ -680,6 +703,34 @@ function deleteCurrentQuestion() {
 function prevQuestion() { if (state.currentQuestionIndex > 0) { state.currentQuestionIndex--; renderQuestion(); } }
 function nextQuestion() { if (state.currentQuestionIndex < state.quizData.questions.length - 1) { state.currentQuestionIndex++; renderQuestion(); } }
 function goToQuestion(i) { state.currentQuestionIndex = i; renderQuestion(); }
+
+// Прокрутка после пролистывания: если видим карточку предпросмотра (например,
+// листаем кнопками под предпросмотром) — скроллим к ней, иначе — к редактору вопроса.
+function scrollAfterQuestionChange() {
+    const pvVisible = els.previewCard && els.previewCard.offsetParent !== null;
+    const target = pvVisible ? els.previewCard : els.questionCard;
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+document.addEventListener('keydown', (e) => {
+    // Alt+← / Alt+→ — быстрое пролистывание вопросов (в т.ч. в режиме предпросмотра).
+    // В полях ввода срабатывает только по Alt, чтобы не мешать обычному тексту.
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const t = e.target;
+    const inField = t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.isContentEditable);
+    if (inField && !e.altKey) return;
+    // Не перехватываем стрелки, когда открыты модальные окна (класс .show)
+    const modalOpen = ['settingsModal', 'loadModal', 'promptsModal', 'promptEditorModal', 'dsResultModal']
+        .some(id => {
+            const m = document.getElementById(id);
+            return m && m.classList && m.classList.contains('show');
+        });
+    if (modalOpen) return;
+    e.preventDefault();
+    if (e.key === 'ArrowLeft') prevQuestion();
+    else nextQuestion();
+    scrollAfterQuestionChange();
+});
 
 function addAnswer() {
     currentQuestion().answers.push({ text: '', correct: false });
