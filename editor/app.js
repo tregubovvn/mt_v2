@@ -9,7 +9,8 @@
 
 // --- Константы ---
 const AUTOSAVE_DEBOUNCE_MS = 1500;      // задержка автосохранения после изменений
-const TEST_APP_BASE_URL = 'https://tregubovvn.github.io/mt/index.html';
+// Приложение тестирования: из редактора открываем версию mt_v2
+const TEST_APP_BASE_URL = 'https://tregubovvn.github.io/mt_v2/index.html';
 const GITVERSE_API = 'https://gitverse.ru/api/v2';
 const GIST_FILENAME = 'quiz.xml';
 

@@ -8,7 +8,7 @@ https://tregubovvn.github.io/mt/editor/
 **Редактор тестов Moodle XML с поддержкой формул LaTeX, облачным хранением в GitHub Gist и AI-генерацией через DeepSeek**
 
 [![Live Demo](https://img.shields.io/badge/🌐_Демо-Онлайн-38bdf8?style=for-the-badge)](https://tregubovvn.github.io/mt/editor/index.html)
-[![Testing App](https://img.shields.io/badge/🎓_Приложение_тестирования-открыть-6d28d9?style=for-the-badge)](https://tregubovvn.github.io/mt/index.html)
+[![Testing App](https://img.shields.io/badge/🎓_Приложение_тестирования-открыть-6d28d9?style=for-the-badge)](https://tregubovvn.github.io/mt_v2/index.html)
 [![License: MIT](https://img.shields.io/badge/Лицензия-MIT-4ade80?style=for-the-badge)](#-лицензия)
 [![No Backend](https://img.shields.io/badge/Сервер-не_требуется-fbbf24?style=for-the-badge)](#-технологии)
 
@@ -313,7 +313,7 @@ https://gist.github.com/tregubovvn/5abee72a0846a0481506b5947e0fb270
 2. Pending-изменения **принудительно досохраняются** в Gist;
 3. Вкладка перенаправляется на приложение тестирования:
    ```
-   https://tregubovvn.github.io/mt/index.html?name=<raw_url>
+   https://tregubovvn.github.io/mt_v2/index.html?name=<raw_url>
    ```
 4. Ссылка копируется в буфер — её можно разослать студентам (или завернуть в QR-код).
 
@@ -621,7 +621,7 @@ mt/
 <details>
 <summary><b>Где взять ссылку, которую можно дать студентам?</b></summary>
 
-Кнопка «Открыть тест» кладёт её в буфер обмена автоматически. Вручную: ссылка Gist в шапке → raw_url → `https://tregubovvn.github.io/mt/index.html?name=<raw_url>`.
+Кнопка «Открыть тест» кладёт её в буфер обмена автоматически. Вручную: ссылка Gist в шапке → raw_url → `https://tregubovvn.github.io/mt_v2/index.html?name=<raw_url>`.
 </details>
 
 <details>
@@ -662,7 +662,7 @@ mt/
 
 **Сделано с ❤️ для образования**
 
-*[Редактор](https://tregubovvn.github.io/mt/editor/index.html) · [Приложение тестирования](https://tregubovvn.github.io/mt/index.html) · Формат Moodle XML + формулы LaTeX*
+*[Редактор](https://tregubovvn.github.io/mt/editor/index.html) · [Приложение тестирования](https://tregubovvn.github.io/mt_v2/index.html) · Формат Moodle XML + формулы LaTeX*
 
 </div>
 - **ASCII-схемы** в код-блоках: архитектура данных и layout интерфейса — читаются на GitHub без картинок.

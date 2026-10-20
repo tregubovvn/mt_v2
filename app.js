@@ -56,6 +56,7 @@ const DEMO_QUIZ_XML = `<?xml version="1.0" encoding="UTF-8"?>
 let questions = [];           // распарсенные вопросы [{name, text, answers:[{text,isCorrect}], isCorrect, _checked}]
 let currentQuestionIndex = 0;
 let userAnswers = [];         // индекс выбранного варианта для каждого вопроса (null — нет ответа)
+let startTime = null;         // момент старта теста (Date.now())
 let timerInterval = null;
 let timeSpent = 0;            // секунды с момента старта теста
 let studentName = '';
