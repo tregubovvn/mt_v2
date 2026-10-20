@@ -107,6 +107,9 @@
                 <!-- Название теста + флаги приложения тестирования + ссылка на тест -->
                 <div class="topic-row">
                     <input type="text" id="quizName" class="input-base topic-input" placeholder="Название теста (используется в описании GIST)…">
+                    <!-- Предупреждение: в задание внесены изменения — опубликуйте заново -->
+                    <span class="republish-note hidden" id="republishNote"
+                        title="После изменений ссылка на тест, кнопка «Открыть тест» и флаги скрыты до повторной публикации">⚠ Тест изменён — нужно опубликовать заново</span>
                     <span class="task-link-inline hidden" id="gistLinkContainer">
                         <a id="publishedTaskLink" class="url-text url-sm" href="#" target="_blank" rel="noopener" title="Ссылка на тест для студентов">—</a>
                         <button type="button" class="btn-icon" id="btnCopyTaskUrl" title="Скопировать ссылку на тест">

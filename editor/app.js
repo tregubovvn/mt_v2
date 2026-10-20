@@ -121,7 +121,7 @@ function cacheElements() {
         'answersContainer', 'questionTabs', 'prevBtn', 'nextBtn',
         // Навигация под окном предпросмотра (дубль навигации редактора)
         'pvNavBar', 'pvPrevBtn', 'pvNextBtn', 'pvQuestionTabs', 'pvQuestionNumber', 'previewCard',
-        'statusText', 'statusMeta', 'toast', 'gistLinkContainer', 'publishedTaskLink',
+        'statusText', 'statusMeta', 'toast', 'gistLinkContainer', 'publishedTaskLink', 'republishNote',
         'loadModal', 'loadGistId', 'settingsModal', 'publishMenu', 'promptBar', 'promptText', 'publishCheckNote',
         'reviewPanel', 'reviewBody', 'reviewSummary', 'btnToggleReview',
         'dsModeSelect', 'btnManagePrompts', 'btnEditPrompt', 'btnCopyPrompt', 'btnReloadPrompt',
@@ -781,6 +781,8 @@ function updateXmlOutput(opts = {}) {
 // Единственная точка «в задании есть изменения»: dirty + автосохранение/предложение сохранить
 function markTaskChanged() {
     state.dirty = true;
+    // Ссылка на тест устарела — прячем её/кнопку/флаги, показываем предупреждение
+    updateGistLinkDisplay();
     scheduleAutoSave();
 }
 
@@ -845,6 +847,7 @@ async function autoSaveToDisk() {
             state.dirty = false;
             showSaveHint(false);
             recordDiskSave();
+            updateGistLinkDisplay();
             setStatus('Автосохранено на диск: ' + state.fileHandle.name + ' в ' + new Date().toLocaleTimeString());
             return;
         }
@@ -955,6 +958,7 @@ async function loadFromDiskFile() {
     updateXmlOutput({ immediate: true, silent: true });
     state.dirty = false;
     showSaveHint(false);
+    updateGistLinkDisplay();
     setStatus('Загружен файл: ' + fileName +
         (handle ? ' — сохранения идут в него' : ' — сохранение будет через скачивание'));
     showToast('Файл «' + fileName + '» загружен (' + state.quizData.questions.length + ' вопр.) и назначен для сохранений');
@@ -1002,6 +1006,7 @@ async function saveToFile() {
             state.dirty = false;
             showSaveHint(false);
             recordDiskSave();
+            updateGistLinkDisplay();
             setStatus('Сохранено в файл: ' + state.fileHandle.name);
             showToast('Файл сохранён на диск');
             return;
@@ -1021,6 +1026,7 @@ async function saveToFile() {
             state.dirty = false;
             showSaveHint(false);
             recordDiskSave();
+            updateGistLinkDisplay();
             setStatus('Сохранено в файл: ' + handle.name + (autoSaveEnabled() ? ' (автосохранение в него включено)' : ''));
             showToast('Файл выбран и сохранён — дальнейшие изменения пишутся в него');
             return;
@@ -1035,6 +1041,7 @@ async function saveToFile() {
     state.dirty = false;
     showSaveHint(false);
     recordDiskSave();
+    updateGistLinkDisplay();
     showToast('Файл сохранён на диск (скачан)');
 }
 
@@ -1210,8 +1217,17 @@ function checkBeforePublish() {
 function openExternal(url) { window.open(url, '_blank', 'noopener'); }
 
 // Ссылка на тест — показывается в строке названия теста: ссылка + копировать + открыть.
+// Если в задание внесены изменения (state.dirty) — ссылка, кнопка «Открыть тест» и
+// флаги скрываются, вместо них показывается предупреждение о повторной публикации.
 function updateGistLinkDisplay() {
     const link = buildTaskUrl();
+    if (state.dirty) {
+        // Изменения ещё не опубликованы — прячем ссылку/кнопку/флаги до републикации
+        els.gistLinkContainer.classList.add('hidden');
+        if (els.republishNote) els.republishNote.classList.remove('hidden');
+        return;
+    }
+    if (els.republishNote) els.republishNote.classList.add('hidden');
     if (link) {
         els.publishedTaskLink.href = link;
         els.publishedTaskLink.textContent = link;
@@ -1314,8 +1330,11 @@ async function saveToGist(opts = {}) {
 
         const fd = data.files[state.gistFilename];
         if (fd && fd.raw_url) state.rawUrl = fd.raw_url;
-        // Публикация не сбрасывает «несохранённость» файла на диске:
-        // dirty остаётся, пока изменения не записаны на диск.
+        // Успешная публикация в GIST = изменения опубликованы: ссылка на тест
+        // снова актуальна, предупреждение «нужно опубликовать заново» снимаем.
+        // (Флаг dirty относится к публикации теста, а не к записи на диск.)
+        state.dirty = false;
+        updateGistLinkDisplay();
         setStatus('Обновлено в GIST в ' + new Date().toLocaleTimeString());
         if (!opts.silent) showPublishedLink('Обновлено в GIST', buildTaskUrl());
     } catch (e) {
@@ -1392,6 +1411,8 @@ async function publishToGitverse(opts = {}) {
         state.gitverseProject = project;
         state.gitverseRawUrl = `https://gitverse.ru/${project}/raw/branch/${branch}/${encodeURIComponent(fileName)}`;
         state.lastPublishTarget = 'gitverse';
+        // Опубликовали — предупреждение об устаревшей ссылке снимаем
+        state.dirty = false;
 
         updateGistLinkDisplay();
         // Ссылка на тест: приложение тестирования открывает XML по raw-ссылке GitVerse
