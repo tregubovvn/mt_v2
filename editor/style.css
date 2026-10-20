@@ -406,6 +406,23 @@ body {
 .pv-letter { font-weight: 700; color: var(--fg-muted); font-size: 0.85rem; flex-shrink: 0; }
 .pv-check { color: var(--success); font-weight: 800; margin-left: auto; white-space: nowrap; font-size: 0.8rem; }
 
+/* ===== Навигация под окном предпросмотра (дубль навигации редактора) ===== */
+.pv-nav-bar {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed var(--border);
+}
+#previewCard .card-header h2 #pvQuestionNumber {
+    display: inline-block;
+    min-width: 1.4em;
+    text-align: center;
+    background: var(--accent);
+    color: #000;
+    border-radius: 6px;
+    padding: 0 0.35em;
+    font-size: 0.85em;
+}
+
 /* ===== Статусная строка ===== */
 .status-bar {
     background: var(--bg-elevated);

@@ -205,10 +205,17 @@
                 <!-- Предпросмотр -->
                 <div class="card" id="previewCard">
                     <div class="card-header">
-                        <h2>Предпросмотр (MathJax)</h2>
+                        <h2>Предпросмотр (MathJax) <span id="pvQuestionNumber">1</span></h2>
                         <span class="hint">так вопрос увидит студент</span>
                     </div>
                     <div id="previewBox" class="preview-box"></div>
+                    <!-- Дублируем навигацию по вопросам под предпросмотром,
+                         чтобы быстро просматривать все вопросы в режиме предпросмотра -->
+                    <div class="nav-bar pv-nav-bar" id="pvNavBar">
+                        <button type="button" id="pvPrevBtn" class="nav-btn" disabled title="Предыдущий вопрос (Alt+←)">← Предыдущий</button>
+                        <div id="pvQuestionTabs" class="fragment-tabs"></div>
+                        <button type="button" id="pvNextBtn" class="nav-btn" title="Следующий вопрос (Alt+→)">Следующий →</button>
+                    </div>
                 </div>
             </div>
         </section>
