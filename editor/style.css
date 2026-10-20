@@ -662,6 +662,21 @@ body {
     border-left: 1px solid var(--border);
     gap: 0.55rem;
 }
+/* Предупреждение: в тест внесены изменения — нужна повторная публикация
+   (на время изменений ссылка, кнопка «Открыть тест» и флаги скрыты) */
+.republish-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    color: #c2410c;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
 
 /* ===== Адаптивность ===== */
 @media (max-width: 900px) {
