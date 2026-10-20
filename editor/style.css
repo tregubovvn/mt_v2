@@ -652,8 +652,16 @@ body {
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 3px 8px;
+    flex-wrap: wrap;
 }
 .url-sm { max-width: 260px; }
+/* Флаги рядом с кнопкой «Открыть тест» — отделены от ссылки вертикальной чертой */
+.task-link-inline .task-flags {
+    margin-left: 0.4rem;
+    padding-left: 0.7rem;
+    border-left: 1px solid var(--border);
+    gap: 0.55rem;
+}
 
 /* ===== Адаптивность ===== */
 @media (max-width: 900px) {
