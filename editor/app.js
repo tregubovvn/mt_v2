@@ -198,9 +198,13 @@ function bindEvents() {
         updateNavigation();
     });
     els.qText.addEventListener('input', () => {
-        currentQuestion().text = els.qText.value;
+        const q = currentQuestion();
+        q.text = els.qText.value;
+        // Для cloze текст — источник истины: пересобираем сегменты пропусков
+        if (q.type === 'cloze') q.clozeSegments = parseClozeSegments(q.text);
         updateXmlOutput();
         schedulePreview();
+        if (q.type === 'cloze') renderAnswers(); // список пропусков устарел после правки текста
     });
     els.qShuffle.addEventListener('change', () => {
         currentQuestion().shuffleanswers = els.qShuffle.value === 'true';
@@ -319,12 +323,37 @@ function bindEvents() {
 }
 
 // Делегирование событий для динамически создаваемых вариантов ответов
+// Поиск пропуска в модели cloze по индексу сегмента
+function clozeBlankAt(q, seg) {
+    const s = (q.clozeSegments || [])[+seg];
+    return s && s.blank ? s : null;
+}
+
 document.addEventListener('input', (e) => {
     const t = e.target;
     const action = t.dataset && t.dataset.action;
     if (!action) return;
+    const q = currentQuestion();
+    // Cloze: правки ответов пропусков пересобирают текст вопроса из сегментов
+    if (action.startsWith('cloze-')) {
+        const s = clozeBlankAt(q, t.dataset.seg);
+        if (!s) return;
+        const j = +t.dataset.a;
+        if (action === 'cloze-answer') {
+            if (s.blank.answers[j]) s.blank.answers[j].text = t.value;
+        } else if (action === 'cloze-feedback') {
+            s.blank.feedback = t.value;
+        } else if (action === 'cloze-tolerance') {
+            let v = parseFloat(t.value); if (!Number.isFinite(v)) v = 0;
+            if (s.blank.answers[j]) s.blank.answers[j].tolerance = v;
+        } else return;
+        q.text = buildClozeText(q.clozeSegments);
+        updateXmlOutput({ force: true });
+        schedulePreview();
+        return;
+    }
     const j = +t.dataset.a;
-    const answers = currentQuestion().answers;
+    const answers = q.answers;
     if (action === 'update-answer') {
         answers[j].text = t.value;
     } else if (action === 'update-tolerance') {
@@ -337,14 +366,58 @@ document.addEventListener('input', (e) => {
     schedulePreview();
 });
 
+// Смена типа пропуска в выпадающем списке карточки cloze (событие change
+// на <select data-action="cloze-type"> не проходит через click-делегирование)
+document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (!t.dataset || t.dataset.action !== 'cloze-type') return;
+    const q = currentQuestion();
+    const s = q && q.type === 'cloze' ? clozeBlankAt(q, t.dataset.seg) : null;
+    if (!s) return;
+    const nt = t.value.toUpperCase();
+    if (nt === s.blank.type) return;
+    s.blank.type = nt;
+    // при смене типа лишние атрибуты ответов безвредны — пересборка текста
+    q.text = buildClozeText(q.clozeSegments);
+    renderAnswers(); renderPreview(); updateXmlOutput();
+});
+
 document.addEventListener('click', (e) => {
     const t = e.target.closest('[data-action]');
     if (!t) return;
+    if (t.tagName === 'SELECT') return;   // селекты обрабатываются через change
     const action = t.dataset.action;
     const q = state.quizData.questions[state.currentQuestionIndex];
     if (!q) return;
-    const j = +t.dataset.a;
 
+    // ===== Cloze: действия с пропусками =====
+    if (action.startsWith('cloze-')) {
+        const s = clozeBlankAt(q, t.dataset.seg);
+        if (!s) return;
+        const b = s.blank;
+        const j = +t.dataset.a;
+        switch (action) {
+            case 'cloze-correct':
+                b.answers.forEach((a, i) => { a.correct = i === j; });
+                break;
+            case 'cloze-add-answer':
+                b.answers.push({ text: '', correct: b.answers.length === 0,
+                                 weight: b.answers.length ? 0 : 100, tolerance: 0 });
+                break;
+            case 'cloze-remove-answer':
+                if (b.answers.length <= 1) { showToast('У пропуска должен остаться хотя бы один ответ', true); return; }
+                b.answers.splice(j, 1);
+                break;
+            default:
+                return;
+        }
+        q.text = buildClozeText(q.clozeSegments);
+        els.qText.value = q.text;
+        renderAnswers(); renderPreview(); updateXmlOutput();
+        return;
+    }
+
+    const j = +t.dataset.a;
     switch (action) {
         case 'set-correct':
             if (q.type === 'multichoice' && !q.single) {
@@ -495,15 +568,118 @@ function buildDsMessage(mode) {
 //   truefalse    — верно / неверно
 //   shortanswer  — короткий текстовый ответ (несколько эталонных вариантов)
 //   numerical    — числовой ответ с допуском (±)
+//   description  — описание без ответа (<questiontext> пустой, текст в <description>)
+//   cloze          — текст с пропусками {...:TYPE:subtask%100%ответ%отличное#неполадочное}
 //   category     — служебный контейнер Moodle (пропускается молча)
 // Остальные неизвестные типы пропускаются при разборе.
 // ============================================================
-const SUPPORTED_QTYPES = ['multichoice', 'truefalse', 'shortanswer', 'numerical'];
+const SUPPORTED_QTYPES = ['multichoice', 'truefalse', 'shortanswer', 'numerical', 'description', 'cloze'];
+
+// Типы, которые не участвуют в проверке ответов приложения (контейнеры/описания)
+const NON_QUESTION_TYPES = ['description'];
 
 // Название типа для отображения в интерфейсе редактора
 function qtypeName(type) {
     return ({ multichoice: 'Multichoice', truefalse: 'True/False',
-              shortanswer: 'Short Answer', numerical: 'Numerical' })[type] || type;
+              shortanswer: 'Short Answer', numerical: 'Numerical',
+              description: 'Описание (description)', cloze: 'Cloze (пропуски)' })[type] || type;
+}
+
+// ===== Cloze: разбор и генерация пропусков =====
+// Синтаксис Moodle: текст {...:Тип:содержимое} текста
+//   Тип: MCMS      — выпадающий список: "верный%100%верно|иначе~неверный%0%ошибка"
+//                    варианты разделяются "|", неправильные добавляются через "~"
+//   T / F / MW     — текстовый пропуск: "ответ|альтернатива:фидбек"
+//   NUMERICAL      — числовой пропуск: "число&допуск|число2:фидбек"
+// Модель редактора для cloze: q.clozeSegments = [ {text} | {blank:{type,answers,feedback}} ]
+const CLOZE_TYPES = ['MCMS', 'T', 'F', 'MW', 'NUMERICAL'];
+const CLOZE_SPLIT_RE = /(\{\.\.\.[^{}]*\})/;
+
+// Разбор содержимого одного пропуска → { type, answers:[{text,weight?,tolerance?,correct}], feedback }
+function parseClozeBlank(inner) {
+    // inner — строка внутри {...: ... }, напр. "MCMS:Да%100%Да~Нет%0%Нет"
+    const segs = inner.split(':');
+    let type = (segs[0] || '').trim().toUpperCase();
+    if (!CLOZE_TYPES.includes(type)) type = 'MCMS';
+    const rest = segs.slice(1).join(':');
+
+    let answerPart = rest, feedback = '';
+    const fc = answerPart.lastIndexOf(':');
+    if (fc >= 0) { feedback = answerPart.slice(fc + 1); answerPart = answerPart.slice(0, fc); }
+
+    const answers = [];
+    if (type === 'MCMS') {
+        // "right%100%ralt~wrong%0%w" — группы через '~', внутри через '|'
+        answerPart.split('~').forEach((group, gi) => {
+            group.split('|').forEach(chunk => {
+                const m = chunk.match(/^(.*?)%(\d+)%(.*)$/s);
+                const text = m ? m[1].trim() : chunk.trim();
+                const weight = m ? parseInt(m[2], 10) : (gi === 0 ? 100 : 0);
+                if (text) answers.push({ text, weight, correct: gi === 0 });
+            });
+        });
+    } else if (type === 'NUMERICAL') {
+        answerPart.split('|').forEach(a => {
+            const amp = a.indexOf('&');
+            const t = (amp >= 0 ? a.slice(0, amp) : a).trim();
+            if (t) answers.push({ text: t,
+                tolerance: amp >= 0 ? (parseFloat(a.slice(amp + 1)) || 0) : 0, correct: true });
+        });
+    } else {
+        answerPart.split('|').forEach(a => {
+            const t = a.trim();
+            if (t) answers.push({ text: t, correct: true });
+        });
+    }
+    return { type, answers, feedback };
+}
+
+// Разбор всего текста вопроса cloze на сегменты (обычный текст / пропуски)
+function parseClozeSegments(text) {
+    const out = [];
+    String(text || '').split(CLOZE_SPLIT_RE).forEach(part => {
+        if (!part) return;
+        const m = part.match(/^\{\.\.\.:([\s\S]*)\}$/);
+        if (m) out.push({ blank: parseClozeBlank(m[1]) });
+        else out.push({ text: part });
+    });
+    if (!out.some(p => p.blank)) out.push({ blank: { type: 'MCMS', answers: [], feedback: '' } });
+    return out;
+}
+
+function clozeSubtypeLabel(t) {
+    return ({ MCMS: 'Выпадающий список', T: 'Текст (короткий)', F: 'Текст (фраза)',
+              MW: 'Текст (слово)', NUMERICAL: 'Число ± допуск' })[t] || t;
+}
+
+// Сборка строки пропуска из модели
+function buildClozeBlank(b) {
+    let body = '';
+    if (b.type === 'MCMS') {
+        // Группы правильных (~) с весом 100, неправильные с весом 0
+        const right = b.answers.filter(a => a.correct);
+        const wrong = b.answers.filter(a => !a.correct);
+        const fmt = (arr, w) => arr.map(a => `${a.text}%${Number.isFinite(a.weight) ? a.weight : w}`).join('|');
+        body = [fmt(right, 100), fmt(wrong, 0)].filter(Boolean).join('~');
+    } else if (b.type === 'NUMERICAL') {
+        body = b.answers.map(a => String(a.text).trim() +
+            (Number(a.tolerance) ? '&' + a.tolerance : '')).join('|');
+    } else {
+        body = b.answers.map(a => String(a.text).trim()).join('|');
+    }
+    const fb = (b.feedback || '').trim();
+    return `{...:${b.type}:${body}${fb ? ':' + fb : ''}}`;
+}
+
+// Пересборка текста вопроса cloze из сегментов
+function buildClozeText(segments) {
+    return segments.map(s => s.blank ? buildClozeBlank(s.blank) : s.text).join('');
+}
+
+// Все ответы всех пропусков cloze-вопроса (для валидации)
+function clozeAllAnswers(q) {
+    return (q.clozeSegments || []).filter(s => s.blank)
+        .flatMap(s => s.blank.answers || []);
 }
 
 // Проверка заполненности ответа по типу вопроса
@@ -521,6 +697,13 @@ function needsCorrectAnswer(q) {
 
 // Есть ли у вопроса корректно заполненный правильный ответ
 function hasValidCorrectAnswer(q) {
+    if (q.type === 'cloze') {
+        // Каждый пропуск cloze должен иметь хотя бы один непустой верный ответ
+        const blanks = (q.clozeSegments || []).filter(s => s.blank);
+        if (!blanks.length) return false;
+        return blanks.every(s => s.blank.answers.some(a => a.correct && String(a.text).trim()));
+    }
+    if (q.type === 'description') return true; // описательный вопрос — ответов нет
     if (!needsCorrectAnswer(q)) return true;
     return q.answers.some(a => a.correct === true && answerFilled(q, a));
 }
@@ -563,6 +746,19 @@ function parseQuestionNode(node) {
         answernumbering: node.querySelector(':scope > answernumbering')?.textContent || 'abc',
         answers: [],
     };
+
+    // Cloze: текст вопроса содержит пропуски {...:Тип:...}; разбираем на сегменты
+    if (type === 'cloze') {
+        q.clozeSegments = parseClozeSegments(q.text);
+        return q;
+    }
+
+    // Description: содержимое в <description>, ответов нет
+    if (type === 'description') {
+        const dEl = node.querySelector(':scope > description > text');
+        if (dEl && dEl.textContent.trim()) q.text = dEl.textContent;
+        return q;
+    }
 
     if (type === 'truefalse') {
         // Фиксированные варианты «Верно» / «Неверно»; правильный — fraction="100"
@@ -637,10 +833,11 @@ function parseXmlToDataQuiet(xmlString) {
 
 // Генерация Moodle XML для одного вопроса — по его типу
 function generateQuestionXml(q) {
+    const qtext = (q.type === 'cloze' && q.clozeSegments) ? buildClozeText(q.clozeSegments) : q.text;
     const head =
         `    <question type="${q.type}">\n` +
         `        <name>\n            <text>${escapeXml(q.name)}</text>\n        </name>\n` +
-        `        <questiontext format="html">\n            <text>${cdata(q.text)}</text>\n        </questiontext>\n` +
+        `        <questiontext format="html">\n            <text>${cdata(qtext)}</text>\n        </questiontext>\n` +
         `        <generalfeedback format="html">\n            <text></text>\n        </generalfeedback>\n` +
         `        <defaultgrade>1.0</defaultgrade>\n` +
         `        <penalty>0.3333333</penalty>\n` +
@@ -669,6 +866,13 @@ function generateQuestionXml(q) {
             `            <tolerance>${Number.isFinite(a.tolerance) ? a.tolerance : 0}</tolerance>\n` +
             `        </answer>\n`
         ).join('');
+    } else if (q.type === 'description') {
+        return head +
+            `        <description format="html">\n            <text>${cdata(qtext)}</text>\n        </description>\n` +
+            '    </question>\n';
+    } else if (q.type === 'cloze') {
+        // Пропуски уже содержатся в тексте вопроса (<questiontext>) — отдельных тегов ответов нет
+        return head + '    </question>\n';
     } else { // shortanswer
         tail = q.answers.map(a =>
             `        <answer fraction="${a.correct ? '100' : '0'}" format="plain">\n            <text>${escapeXml(a.text)}</text>\n        </answer>\n`
@@ -713,6 +917,12 @@ function newQuestion(type = 'multichoice') {
         base.answers = [{ text: '', correct: true }, { text: '', correct: false }];
     } else if (type === 'numerical') {
         base.answers = [{ text: '', correct: true, tolerance: 0 }, { text: '', correct: false, tolerance: 0 }];
+    } else if (type === 'description') {
+        base.text = '<p>Текст описания (без ответа)</p>';
+    } else if (type === 'cloze') {
+        // Один пропуск по умолчанию; текст — источник истины, сегменты парсятся из него
+        base.text = '<p>Вставьте текст с пропуском вида {...:MCMS:верно%100~неверно%0}</p>';
+        base.clozeSegments = parseClozeSegments(base.text);
     } else {
         base.answers = [{ text: '', correct: true }, { text: '', correct: false }];
     }
@@ -765,30 +975,76 @@ function updateTypeDependentUI() {
     // Тег <single> относится только к multichoice
     const singleRow = document.getElementById('qSingleRow');
     if (singleRow) singleRow.classList.toggle('hidden', !isChoice);
-    // Кнопка добавления варианта — не нужна у truefalse (2 фиксированных варианта)
+    // Кнопка добавления варианта — не нужна у truefalse (2 фиксированных варианта),
+    // description (ответов нет) и cloze (пропуски редактируются в своём списке)
     const addBtn = document.getElementById('btnAddAnswer');
-    if (addBtn) addBtn.classList.toggle('hidden', type === 'truefalse');
+    if (addBtn) addBtn.classList.toggle('hidden', type === 'truefalse' || type === 'description' || type === 'cloze');
     // Подсказки под списком ответов — по типу
     const hints = {
         multichoice: 'Нажмите на кружок слева, чтобы отметить правильный ответ (fraction = 100). Остальные получат fraction = 0.',
         truefalse: 'Отметьте кружком верный вариант: «Верно» (true) или «Неверно» (false).',
         shortanswer: 'Перечислите допустимые эталонные ответы (каждый засчитывается как верный). Лишние пустые строки будут пропущены.',
         numerical: 'Укажите число и допуск ± (tolerance). Можно добавить несколько эталонных чисел.',
+        description: 'Вопрос-описание: текст выводится перед другими вопросами, ответов и проверки нет.',
+        cloze: 'Пропуски задаются в тексте вопроса: {...:MCMS:верно%100~неверно%0}, {...:T:ответ|альтернатива:фидбек}, {...:NUMERICAL:число&допуск}. Ниже можно отредактировать каждый пропуск.',
     };
     const hintEl = document.getElementById('answersHint');
     if (hintEl) hintEl.textContent = hints[type] || '';
     const titleEl = document.getElementById('answersTitle');
     if (titleEl) titleEl.textContent = type === 'shortanswer' ? 'Эталонные ответы'
-        : type === 'numerical' ? 'Эталонные числа' : 'Варианты ответов';
+        : type === 'numerical' ? 'Эталонные числа'
+        : type === 'cloze' ? 'Пропуски (subquestions)'
+        : type === 'description' ? '' : 'Варианты ответов';
+}
+
+// Список пропусков для cloze-вопроса
+function renderClozeBlanks(q) {
+    els.answersContainer.innerHTML = (q.clozeSegments || []).map((s, si) => {
+        if (!s.blank) return '';
+        const b = s.blank;
+        const isMC = b.type === 'MCMS';
+        const isNum = b.type === 'NUMERICAL';
+        const rows = b.answers.map((a, j) => `
+            <div class="option-row ${a.correct ? 'correct' : ''}">
+                <div class="radio ${a.correct ? 'selected' : ''}" data-action="cloze-correct" data-seg="${si}" data-a="${j}"
+                     title="Отметить как ${isMC ? 'верный вариант списка' : 'эталонный ответ'}"></div>
+                <span class="frac-badge ${a.correct ? 'frac-100' : 'frac-0'}">${a.correct ? (isMC ? '100%' : '✔') : (isMC ? '0%' : '')}</span>
+                <input type="${isNum ? 'number' : 'text'}" step="any" class="opt-input"
+                       data-action="cloze-answer" data-seg="${si}" data-a="${j}"
+                       placeholder="${isNum ? 'Число' : 'Текст ответа'}" value="${escAttr(a.text ?? '')}">
+                ${isNum ? `<input type="number" step="any" min="0" class="input-base tol-input" data-action="cloze-tolerance" data-seg="${si}" data-a="${j}" value="${Number.isFinite(a.tolerance) ? a.tolerance : 0}" title="Допуск ±">` : ''}
+                <button type="button" class="btn-icon" data-action="cloze-remove-answer" data-seg="${si}" data-a="${j}" title="Удалить ответ">&#10005;</button>
+            </div>`).join('');
+        const fb = `<input type="text" class="input-base" style="flex:1" placeholder="Обратная связь (feedback)"
+                        data-action="cloze-feedback" data-seg="${si}" value="${escAttr(b.feedback ?? '')}">`;
+        return `
+        <div class="cloze-blank-card">
+            <div class="cloze-blank-head">
+                <strong>Пропуск ${si + 1}</strong>
+                <select class="input-base" data-action="cloze-type" data-seg="${si}" title="Тип пропуска">
+                    ${['MCMS', 'T', 'F', 'MW', 'NUMERICAL'].map(t =>
+                        `<option value="${t}" ${b.type === t ? 'selected' : ''}>${clozeSubtypeLabel(t)}</option>`).join('')}
+                </select>
+                <button type="button" class="btn btn-sm" data-action="cloze-add-answer" data-seg="${si}">+ Ответ</button>
+            </div>
+            ${rows || '<div class="empty-hint">Нет ответов в пропуске</div>'}
+            ${fb}
+        </div>`;
+    }).join('') || '<div class="empty-hint">В тексте вопроса нет пропусков. Добавьте в текст вида {...:MCMS:верно%100~неверно%0}</div>';
 }
 
 function renderAnswers() {
     const q = currentQuestion();
+    const type = q.type || 'multichoice';
+    if (type === 'cloze') { renderClozeBlanks(q); return; }
+    if (type === 'description') {
+        els.answersContainer.innerHTML = '<div class="empty-hint">У вопроса-описания ответов нет.</div>';
+        return;
+    }
     if (!q.answers.length) {
         els.answersContainer.innerHTML = '<div class="empty-hint">Нет вариантов ответа.</div>';
         return;
     }
-    const type = q.type || 'multichoice';
     els.answersContainer.innerHTML = q.answers.map((a, j) => {
         const radio = (type === 'shortanswer')
             ? `<span class="frac-badge ${a.correct ? 'frac-100' : 'frac-0'}" title="Эталонный ответ">${a.correct ? '✔' : '—'}</span>`
@@ -828,7 +1084,35 @@ function renderPreview() {
 
     let html = `<div class="pv-question">${q.text || '<span class="hint">— текст вопроса пуст —</span>'}</div>`;
 
-    if (type === 'shortanswer') {
+    if (type === 'cloze') {
+        // Предпросмотр cloze: текст с инлайн-элементами вместо пропусков
+        let bi = 0;
+        html = `<div class="pv-question">${(q.clozeSegments || []).map(s => {
+            if (!s.blank) return escHtml(s.text);
+            bi++;
+            const b = s.blank;
+            const right = (b.answers || []).filter(a => a.correct).map(a => a.text);
+            let ctl;
+            if (b.type === 'MCMS') {
+                const opts = (b.answers || []);
+                ctl = `<select class="pv-cloze-select" disabled>` +
+                    (opts.length ? opts.map(a => `<option${a.correct ? ' selected' : ''}>${escHtml(a.text)}</option>`).join('')
+                                 : '<option>— нет вариантов —</option>') + '</select>';
+            } else if (b.type === 'NUMERICAL') {
+                ctl = `<input class="pv-cloze-input" disabled placeholder="число">`;
+            } else {
+                ctl = `<input class="pv-cloze-input" disabled placeholder="текст">`;
+            }
+            return `<span class="pv-cloze-blank" title="${escAttr(clozeSubtypeLabel(b.type))}${right.length ? '; верно: ' + right.join(', ') : '; верный ответ не задан'}">${ctl}</span>`;
+        }).join('')}</div>`;
+        const badBlanks = (q.clozeSegments || []).filter(s => s.blank &&
+            !s.blank.answers.some(a => a.correct && String(a.text).trim()));
+        if (badBlanks.length) {
+            html += `<div class="pv-sa-refs missing">Пропуски без верного ответа: ${badBlanks.map(s => '№' + ((q.clozeSegments.indexOf(s)) + 1)).join(', ')}</div>`;
+        }
+    } else if (type === 'description') {
+        html += `<p class="hint">Вопрос-описание — отображается как текст, без проверки.</p>`;
+    } else if (type === 'shortanswer') {
         const refs = q.answers.filter(a => String(a.text ?? '').trim());
         html += `<div class="pv-answer pv-input-line"><span class="pv-letter">➤</span><span class="pv-text hint">поле ввода короткого ответа</span></div>`;
         html += refs.length
@@ -1336,6 +1620,13 @@ function findAnswerIssues() {
         if (q.type === 'shortanswer') {
             if (!q.answers.some(a => String(a.text ?? '').trim())) {
                 issues.push({ question: qi, reason: 'не задан эталонный ответ' });
+            }
+        } else if (q.type === 'cloze') {
+            const bad = (q.clozeSegments || []).filter(s => s.blank &&
+                !s.blank.answers.some(a => a.correct && String(a.text).trim())).length;
+            if (bad) issues.push({ question: qi, reason: `пропусков без верного ответа: ${bad}` });
+            else if (!(q.clozeSegments || []).some(s => s.blank)) {
+                issues.push({ question: qi, reason: 'в тексте нет ни одного пропуска {...:...}' });
             }
         } else if (!hasValidCorrectAnswer(q)) {
             issues.push({ question: qi, reason: 'не выбран правильный вариант' });
