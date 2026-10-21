@@ -117,7 +117,7 @@ function cacheElements() {
     const ids = [
         'quizName', 'flCheckMode', 'flShowHeader', 'flCrushMode', 'flRandomMode',
         'xmlEditor', 'xmlPanel', 'resizer', 'editorContainer',
-        'questionCard', 'questionNumber', 'qName', 'qShuffle', 'qNumbering', 'qText', 'fxBar',
+        'questionCard', 'questionNumber', 'qType', 'qSingle', 'qName', 'qShuffle', 'qNumbering', 'qText', 'fxBar',
         'answersContainer', 'questionTabs', 'prevBtn', 'nextBtn',
         // Навигация под окном предпросмотра (дубль навигации редактора)
         'pvNavBar', 'pvPrevBtn', 'pvNextBtn', 'pvQuestionTabs', 'pvQuestionNumber', 'previewCard',
@@ -211,6 +211,43 @@ function bindEvents() {
         updateXmlOutput();
         renderPreview();
     });
+
+    // ===== Тип вопроса и множественный выбор =====
+    function bindTypeControls() {
+        if (!els.qType || !els.qSingle) return;
+        // Смена типа: подтверждение (структура ответов пересоздаётся под новый тип)
+        els.qType.addEventListener('change', () => {
+            const q = currentQuestion();
+            const newType = els.qType.value;
+            if (newType === q.type) return;
+            if (!confirm(`Сменить тип вопроса на «${qtypeName(newType)}»?\nВарианты/ответы текущего вопроса будут пересозданы под новый тип.`)) {
+                els.qType.value = q.type;
+                return;
+            }
+            Object.assign(q, newQuestion(newType), { name: q.name, text: q.text });
+            renderQuestion();
+            updateXmlOutput();
+        });
+        // Множественный выбор (<single>false</single>) — только для multichoice
+        els.qSingle.addEventListener('change', () => {
+            const q = currentQuestion();
+            q.single = !els.qSingle.checked;
+            // При переходе к одиночному выбору оставляем первый правильный вариант
+            if (q.single) {
+                let firstCorrect = true;
+                q.answers.forEach(a => {
+                    if (a.correct) {
+                        if (firstCorrect) firstCorrect = false; else a.correct = false;
+                    }
+                });
+                renderAnswers();
+            }
+            updateXmlOutput();
+            renderPreview();
+        });
+    }
+    bindTypeControls();
+
     els.quizName.addEventListener('input', () => {
         state.quizData.name = els.quizName.value;
         updateXmlOutput();
@@ -290,6 +327,9 @@ document.addEventListener('input', (e) => {
     const answers = currentQuestion().answers;
     if (action === 'update-answer') {
         answers[j].text = t.value;
+    } else if (action === 'update-tolerance') {
+        answers[j].tolerance = parseFloat(t.value);
+        if (!Number.isFinite(answers[j].tolerance)) answers[j].tolerance = 0;
     } else return;
     // force: поле принадлежит динамическому списку и перерисовывается только по явным
     // действиям (добавить/удалить), поэтому перезапись XML-панели не сбрасывает фокус
@@ -307,7 +347,12 @@ document.addEventListener('click', (e) => {
 
     switch (action) {
         case 'set-correct':
-            q.answers.forEach((a, i) => { a.correct = i === j; });
+            if (q.type === 'multichoice' && !q.single) {
+                // Множественный выбор — переключаем отметки независимо
+                q.answers[j].correct = !q.answers[j].correct;
+            } else {
+                q.answers.forEach((a, i) => { a.correct = i === j; });
+            }
             break;
         case 'remove-answer': {
             if (q.answers.length <= 2) { showToast('Минимум 2 варианта ответа', true); return; }
@@ -444,8 +489,41 @@ function buildDsMessage(mode) {
 }
 
 // ============================================================
-// XML: парсинг и генерация (Moodle XML, вопросы multichoice)
+// XML: парсинг и генерация (Moodle XML)
+// Поддерживаемые типы вопросов:
+//   multichoice  — один/несколько правильных вариантов (<single>true/false</single>)
+//   truefalse    — верно / неверно
+//   shortanswer  — короткий текстовый ответ (несколько эталонных вариантов)
+//   numerical    — числовой ответ с допуском (±)
+//   category     — служебный контейнер Moodle (пропускается молча)
+// Остальные неизвестные типы пропускаются при разборе.
 // ============================================================
+const SUPPORTED_QTYPES = ['multichoice', 'truefalse', 'shortanswer', 'numerical'];
+
+// Название типа для отображения в интерфейсе редактора
+function qtypeName(type) {
+    return ({ multichoice: 'Multichoice', truefalse: 'True/False',
+              shortanswer: 'Short Answer', numerical: 'Numerical' })[type] || type;
+}
+
+// Проверка заполненности ответа по типу вопроса
+function answerFilled(q, a) {
+    if (q.type === 'numerical') return String(a.text ?? '').trim() !== '';
+    if (q.type === 'truefalse')  return true; // фиксированные варианты всегда заданы
+    if (q.type === 'shortanswer') return String(a.text ?? '').trim() !== '' || a.correct === true;
+    return String(a.text ?? '').trim() !== '' && typeof a.correct === 'boolean';
+}
+
+// Требуется ли вообще правильный ответ у этого типа
+function needsCorrectAnswer(q) {
+    return q.type === 'multichoice' || q.type === 'truefalse' || q.type === 'numerical';
+}
+
+// Есть ли у вопроса корректно заполненный правильный ответ
+function hasValidCorrectAnswer(q) {
+    if (!needsCorrectAnswer(q)) return true;
+    return q.answers.some(a => a.correct === true && answerFilled(q, a));
+}
 // «Тихий» парсинг XML в состояние (без toast и без перерисовки редактора) —
 // используется при живом редактировании XML-панели, чтобы проверка публикации
 // и панель обзора видели актуальные данные.
@@ -460,8 +538,80 @@ function silentParseXml(xmlString) {
 
 function parseXmlToData(xmlString) {
     const ok = parseXmlToDataQuiet(xmlString);
-    if (!ok) showToast('Некорректный XML (нет вопросов типа multichoice)', true);
+    if (!ok) showToast('Некорректный XML (нет поддерживаемых вопросов: multichoice / truefalse / shortanswer / numerical)', true);
     return ok;
+}
+
+// Разбор одного узла <question> в модель редактора. Возвращает null, если тип
+// не поддерживается (кроме category — её просто пропускаем без предупреждения).
+function parseQuestionNode(node) {
+    const type = node.getAttribute('type') || '';
+    if (type === 'category') return null;               // служебный контейнер — пропускаем молча
+    if (!SUPPORTED_QTYPES.includes(type)) {
+        console.warn('Пропущен неподдерживаемый тип вопроса:', type || '(без type)');
+        return null;
+    }
+
+    const nameEl = node.querySelector(':scope > name > text');
+    const qtEl = node.querySelector(':scope > questiontext > text');
+    const q = {
+        type,
+        name: nameEl ? nameEl.textContent : '',
+        text: qtEl ? qtEl.textContent : '',
+        single: (node.querySelector(':scope > single')?.textContent || 'true').trim() !== 'false',
+        shuffleanswers: (node.querySelector(':scope > shuffleanswers')?.textContent || 'true') !== 'false',
+        answernumbering: node.querySelector(':scope > answernumbering')?.textContent || 'abc',
+        answers: [],
+    };
+
+    if (type === 'truefalse') {
+        // Фиксированные варианты «Верно» / «Неверно»; правильный — fraction="100"
+        q.answers = [
+            { text: 'Верно',  correct: false },
+            { text: 'Неверно', correct: false },
+        ];
+        node.querySelectorAll(':scope > answer').forEach(a => {
+            const t = (a.querySelector(':scope > text')?.textContent || '').trim().toLowerCase();
+            const frac = parseFloat(a.getAttribute('fraction') || '0');
+            const idx = (t === 'true' || t === 'верно' || t === 'да' || t === 'истина') ? 0 : 1;
+            q.answers[idx].correct = frac > 0;
+        });
+        return q;
+    }
+
+    node.querySelectorAll(':scope > answer').forEach(a => {
+        const tEl = a.querySelector(':scope > text');
+        const ans = { text: tEl ? tEl.textContent : '' };
+        const frac = parseFloat(a.getAttribute('fraction') || '0');
+        if (type === 'numerical') {
+            // Числовой ответ + допуск (tolerance) из дочернего тега.
+            // В Moodle эталонные числа имеют fraction="100"; при разборе
+            // запоминаем и исходную дробь (rawFraction) для точной генерации.
+            ans.tolerance = parseFloat(a.querySelector(':scope > tolerance')?.textContent ?? '0') || 0;
+            ans.rawFraction = frac;
+            ans.correct = true; // все эталонные числа считаются правильными ответами
+        } else {
+            ans.correct = frac > 0;
+        }
+        q.answers.push(ans);
+    });
+
+    if (type === 'multichoice' && !q.single) {
+        // Множественный выбор: допускается несколько правильных вариантов
+        // (fraction 100 или положительная дробь при PARTIALCREDIT/NESTEDMODE)
+        q.answers.forEach(a => { a.correct = a.correct || parseFloat(a.rawFraction || 0) > 0; });
+    } else if (type === 'multichoice') {
+        // Одиночный выбор — оставляем первый правильный
+        let firstCorrect = true;
+        q.answers.forEach(a => {
+            if (a.correct) {
+                if (firstCorrect) firstCorrect = false; else a.correct = false;
+            }
+        });
+    }
+
+    if (!q.answers.length) q.answers = [{ text: '', correct: type !== 'shortanswer' }];
+    return q;
 }
 
 function parseXmlToDataQuiet(xmlString) {
@@ -471,38 +621,11 @@ function parseXmlToDataQuiet(xmlString) {
 
         const qs = [];
         doc.querySelectorAll('question').forEach(node => {
-            if ((node.getAttribute('type') || '') !== 'multichoice') return; // другие типы пропускаем
-
-            const nameEl = node.querySelector(':scope > name > text');
-            const qtEl = node.querySelector(':scope > questiontext > text');
-
-            const answers = [];
-            node.querySelectorAll(':scope > answer').forEach(a => {
-                const tEl = a.querySelector(':scope > text');
-                const frac = parseFloat(a.getAttribute('fraction') || '0');
-                answers.push({ text: tEl ? tEl.textContent : '', correct: frac > 0 });
-            });
-
-            // Редактор рассчитан на один правильный ответ — оставляем первый
-            let firstCorrect = true;
-            answers.forEach(a => {
-                if (a.correct) {
-                    if (firstCorrect) firstCorrect = false; else a.correct = false;
-                }
-            });
-
-            if (!answers.length) return;
-
-            qs.push({
-                name: nameEl ? nameEl.textContent : '',
-                text: qtEl ? qtEl.textContent : '',
-                shuffleanswers: (node.querySelector(':scope > shuffleanswers')?.textContent || 'true') !== 'false',
-                answernumbering: node.querySelector(':scope > answernumbering')?.textContent || 'abc',
-                answers,
-            });
+            const q = parseQuestionNode(node);
+            if (q) qs.push(q);
         });
 
-        if (!qs.length) throw new Error('no multichoice questions');
+        if (!qs.length) throw new Error('no supported questions');
 
         state.quizData.questions = qs;
         if (state.currentQuestionIndex >= qs.length) state.currentQuestionIndex = 0;
@@ -512,23 +635,52 @@ function parseXmlToDataQuiet(xmlString) {
     }
 }
 
+// Генерация Moodle XML для одного вопроса — по его типу
+function generateQuestionXml(q) {
+    const head =
+        `    <question type="${q.type}">\n` +
+        `        <name>\n            <text>${escapeXml(q.name)}</text>\n        </name>\n` +
+        `        <questiontext format="html">\n            <text>${cdata(q.text)}</text>\n        </questiontext>\n` +
+        `        <generalfeedback format="html">\n            <text></text>\n        </generalfeedback>\n` +
+        `        <defaultgrade>1.0</defaultgrade>\n` +
+        `        <penalty>0.3333333</penalty>\n` +
+        `        <hidden>0</hidden>\n`;
+    let body = '';
+    let tail = '';
+
+    if (q.type === 'multichoice') {
+        body = `        <single>${q.single ? 'true' : 'false'}</single>\n` +
+               `        <shuffleanswers>${q.shuffleanswers ? 'true' : 'false'}</shuffleanswers>\n` +
+               `        <answernumbering>${escapeXml(q.answernumbering || 'abc')}</answernumbering>\n`;
+        // multichoice: fraction 100/0 (одиночный) или дробь при множественном выборе
+        const correctCount = q.answers.filter(a => a.correct).length || 1;
+        const frac = (q.single || correctCount <= 1) ? '100' : String(Math.round(100 / correctCount));
+        tail = q.answers.map(a =>
+            `        <answer fraction="${a.correct ? frac : '0'}" format="html">\n            <text>${cdata(a.text)}</text>\n        </answer>\n`
+        ).join('');
+    } else if (q.type === 'truefalse') {
+        tail = q.answers.map(a =>
+            `        <answer fraction="${a.correct ? '100' : '0'}">\n            <text>${a.text.trim() === 'Верно' ? 'true' : 'false'}</text>\n        </answer>\n`
+        ).join('');
+    } else if (q.type === 'numerical') {
+        tail = q.answers.map(a =>
+            `        <answer fraction="${Number.isFinite(a.rawFraction) ? a.rawFraction : '100'}" format="moodle_auto_format">\n` +
+            `            <text>${escapeXml(String(a.text ?? '').trim())}</text>\n` +
+            `            <tolerance>${Number.isFinite(a.tolerance) ? a.tolerance : 0}</tolerance>\n` +
+            `        </answer>\n`
+        ).join('');
+    } else { // shortanswer
+        tail = q.answers.map(a =>
+            `        <answer fraction="${a.correct ? '100' : '0'}" format="plain">\n            <text>${escapeXml(a.text)}</text>\n        </answer>\n`
+        ).join('');
+    }
+    return head + body + tail + '    </question>\n';
+}
+
 function generateXml() {
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n';
     state.quizData.questions.forEach(q => {
-        xml += '    <question type="multichoice">\n';
-        xml += `        <name>\n            <text>${escapeXml(q.name)}</text>\n        </name>\n`;
-        xml += `        <questiontext format="html">\n            <text>${cdata(q.text)}</text>\n        </questiontext>\n`;
-        xml += '        <generalfeedback format="html">\n            <text></text>\n        </generalfeedback>\n';
-        xml += '        <defaultgrade>1.0</defaultgrade>\n';
-        xml += '        <penalty>0.3333333</penalty>\n';
-        xml += '        <hidden>0</hidden>\n';
-        xml += '        <single>true</single>\n';
-        xml += `        <shuffleanswers>${q.shuffleanswers ? 'true' : 'false'}</shuffleanswers>\n`;
-        xml += `        <answernumbering>${escapeXml(q.answernumbering || 'abc')}</answernumbering>\n`;
-        q.answers.forEach(a => {
-            xml += `        <answer fraction="${a.correct ? '100' : '0'}" format="html">\n            <text>${cdata(a.text)}</text>\n        </answer>\n`;
-        });
-        xml += '    </question>\n';
+        xml += generateQuestionXml(q);
     });
     xml += '</quiz>\n';
     return xml;
@@ -545,14 +697,26 @@ function cdata(str) {
     return '<![CDATA[' + String(str || '').replace(/\]\]>/g, ']]]]><![CDATA[>') + ']]>';
 }
 
-function newQuestion() {
-    return {
+function newQuestion(type = 'multichoice') {
+    const base = {
+        type,
         name: 'Вопрос',
         text: '<p></p>',
+        single: true,
         shuffleanswers: true,
         answernumbering: 'abc',
-        answers: [{ text: '', correct: true }, { text: '', correct: false }],
+        answers: [],
     };
+    if (type === 'truefalse') {
+        base.answers = [{ text: 'Верно', correct: true }, { text: 'Неверно', correct: false }];
+    } else if (type === 'shortanswer') {
+        base.answers = [{ text: '', correct: true }, { text: '', correct: false }];
+    } else if (type === 'numerical') {
+        base.answers = [{ text: '', correct: true, tolerance: 0 }, { text: '', correct: false, tolerance: 0 }];
+    } else {
+        base.answers = [{ text: '', correct: true }, { text: '', correct: false }];
+    }
+    return base;
 }
 
 // ============================================================
@@ -572,15 +736,50 @@ function renderQuestion() {
     const q = state.quizData.questions[state.currentQuestionIndex];
 
     els.questionNumber.textContent = state.currentQuestionIndex + 1;
+    // Тип вопроса: переключается только для новых вопросов (смена типа
+    // существующего может потерять данные) — при смене спрашиваем подтверждение
+    els.qType.value = q.type || 'multichoice';
     els.qName.value = q.name;
     els.qText.value = q.text;
     els.qShuffle.value = q.shuffleanswers ? 'true' : 'false';
     els.qNumbering.value = q.answernumbering || 'abc';
+    els.qSingle.checked = !q.single;
+    updateTypeDependentUI();
 
     renderAnswers();
     renderPreview();
     updateNavigation();
     els.statusMeta.textContent = 'Вопросов: ' + state.quizData.questions.length;
+}
+
+// Настройка видимости полей под текущий тип вопроса
+function updateTypeDependentUI() {
+    const q = currentQuestion();
+    const type = q.type || 'multichoice';
+    const isChoice = type === 'multichoice';
+    // Перемешивание/нумерация вариантов имеют смысл только у multichoice
+    const shuffleField = els.qShuffle.closest('div');
+    const numberingField = els.qNumbering.closest('div');
+    if (shuffleField) shuffleField.classList.toggle('hidden', !isChoice);
+    if (numberingField) numberingField.classList.toggle('hidden', !isChoice);
+    // Тег <single> относится только к multichoice
+    const singleRow = document.getElementById('qSingleRow');
+    if (singleRow) singleRow.classList.toggle('hidden', !isChoice);
+    // Кнопка добавления варианта — не нужна у truefalse (2 фиксированных варианта)
+    const addBtn = document.getElementById('btnAddAnswer');
+    if (addBtn) addBtn.classList.toggle('hidden', type === 'truefalse');
+    // Подсказки под списком ответов — по типу
+    const hints = {
+        multichoice: 'Нажмите на кружок слева, чтобы отметить правильный ответ (fraction = 100). Остальные получат fraction = 0.',
+        truefalse: 'Отметьте кружком верный вариант: «Верно» (true) или «Неверно» (false).',
+        shortanswer: 'Перечислите допустимые эталонные ответы (каждый засчитывается как верный). Лишние пустые строки будут пропущены.',
+        numerical: 'Укажите число и допуск ± (tolerance). Можно добавить несколько эталонных чисел.',
+    };
+    const hintEl = document.getElementById('answersHint');
+    if (hintEl) hintEl.textContent = hints[type] || '';
+    const titleEl = document.getElementById('answersTitle');
+    if (titleEl) titleEl.textContent = type === 'shortanswer' ? 'Эталонные ответы'
+        : type === 'numerical' ? 'Эталонные числа' : 'Варианты ответов';
 }
 
 function renderAnswers() {
@@ -589,15 +788,29 @@ function renderAnswers() {
         els.answersContainer.innerHTML = '<div class="empty-hint">Нет вариантов ответа.</div>';
         return;
     }
-    els.answersContainer.innerHTML = q.answers.map((a, j) => `
+    const type = q.type || 'multichoice';
+    els.answersContainer.innerHTML = q.answers.map((a, j) => {
+        const radio = (type === 'shortanswer')
+            ? `<span class="frac-badge ${a.correct ? 'frac-100' : 'frac-0'}" title="Эталонный ответ">${a.correct ? '✔' : '—'}</span>`
+            : `<div class="radio ${a.correct ? 'selected' : ''}" data-action="set-correct" data-a="${j}" title="Отметить как правильный${type === 'numerical' ? ' (эталон)' : ' (fraction = 100)'}"></div>`;
+        const tol = type === 'numerical'
+            ? `<input type="number" step="any" min="0" class="input-base tol-input" data-action="update-tolerance" data-a="${j}"
+                   value="${Number.isFinite(a.tolerance) ? a.tolerance : 0}" title="Допуск ± (tolerance)">`
+            : '';
+        const inputType = type === 'numerical' ? 'number' : 'text';
+        const ph = type === 'numerical' ? 'Число, напр. 3.14'
+            : type === 'shortanswer' ? 'Эталонный ответ (слово или фраза)'
+            : 'Текст ответа, может содержать \\(формулу\\)';
+        return `
         <div class="option-row ${a.correct ? 'correct' : ''}">
-            <div class="radio ${a.correct ? 'selected' : ''}" data-action="set-correct" data-a="${j}" title="Отметить как правильный (fraction = 100)"></div>
-            <span class="frac-badge ${a.correct ? 'frac-100' : 'frac-0'}">${a.correct ? '100%' : '0%'}</span>
-            <textarea rows="1" class="opt-input" data-action="update-answer" data-a="${j}"
-                placeholder="Текст ответа, может содержать \\(формулу\\)">${escHtml(a.text)}</textarea>
+            ${radio}
+            <span class="frac-badge ${a.correct ? 'frac-100' : 'frac-0'}">${a.correct ? (type === 'numerical' ? 'эталон' : '100%') : (type === 'numerical' ? '' : '0%')}</span>
+            <input type="${inputType}" step="any" class="opt-input" data-action="update-answer" data-a="${j}"
+                placeholder="${ph}" value="${escAttr(a.text ?? '')}">
+            ${tol}
             <button type="button" class="btn-icon" data-action="remove-answer" data-a="${j}" title="Удалить ответ">&#10005;</button>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 }
 
 function letterFor(numbering, j) {
@@ -611,18 +824,37 @@ function letterFor(numbering, j) {
 function renderPreview() {
     const q = currentQuestion();
     const box = document.getElementById('previewBox');
+    const type = q.type || 'multichoice';
 
     let html = `<div class="pv-question">${q.text || '<span class="hint">— текст вопроса пуст —</span>'}</div>`;
-    html += q.answers.map((a, j) => {
-        const L = letterFor(q.answernumbering, j);
-        const label = q.answernumbering === 'none' ? L : L + '.';
-        return `
-        <div class="pv-answer ${a.correct ? 'pv-correct' : ''}">
-            <span class="pv-letter">${label}</span>
-            <span class="pv-text">${a.text || '—'}</span>
-            ${a.correct ? '<span class="pv-check">✓ верно</span>' : ''}
-        </div>`;
-    }).join('');
+
+    if (type === 'shortanswer') {
+        const refs = q.answers.filter(a => String(a.text ?? '').trim());
+        html += `<div class="pv-answer pv-input-line"><span class="pv-letter">➤</span><span class="pv-text hint">поле ввода короткого ответа</span></div>`;
+        html += refs.length
+            ? `<div class="pv-sa-refs"><strong>Эталонные ответы:</strong> ${refs.map(a => escHtml(String(a.text).trim())).join(' · ')}</div>`
+            : `<div class="pv-sa-refs missing">Эталонный ответ не задан</div>`;
+    } else if (type === 'numerical') {
+        const refs = q.answers.filter(a => String(a.text ?? '').trim());
+        html += `<div class="pv-answer pv-input-line"><span class="pv-letter">➤</span><span class="pv-text hint">поле ввода числа</span></div>`;
+        html += refs.length
+            ? refs.map(a => `<div class="pv-sa-refs"><strong>Эталон:</strong> ${escHtml(String(a.text).trim())} ± ${Number.isFinite(a.tolerance) ? a.tolerance : 0}</div>`).join('')
+            : `<div class="pv-sa-refs missing">Эталонное число не задано</div>`;
+    } else {
+        html += q.answers.map((a, j) => {
+            const L = type === 'truefalse' ? '•' : letterFor(q.answernumbering, j);
+            const label = (type === 'truefalse' || q.answernumbering === 'none') ? L : L + '.';
+            return `
+            <div class="pv-answer ${a.correct ? 'pv-correct' : ''}">
+                <span class="pv-letter">${label}</span>
+                <span class="pv-text">${a.text || '—'}</span>
+                ${a.correct ? '<span class="pv-check">✓ верно</span>' : ''}
+            </div>`;
+        }).join('');
+        if (type === 'multichoice' && !q.single) {
+            html += `<p class="hint">Множественный выбор: допустимо несколько правильных вариантов</p>`;
+        }
+    }
 
     box.innerHTML = html;
     if (window.MathJax && MathJax.typesetPromise) {
@@ -734,7 +966,11 @@ document.addEventListener('keydown', (e) => {
 });
 
 function addAnswer() {
-    currentQuestion().answers.push({ text: '', correct: false });
+    const q = currentQuestion();
+    if (q.type === 'truefalse') return; // варианты фиксированы: Верно / Неверно
+    const a = { text: '', correct: false };
+    if (q.type === 'numerical') a.tolerance = 0;
+    q.answers.push(a);
     renderAnswers();
     renderPreview();
     updateXmlOutput();
@@ -1090,13 +1326,18 @@ function copyXml() {
 // ============================================================
 
 /**
- * Индекс проблем с правильными ответами по всем вопросам:
- *  - вопросы multichoice без отмеченного правильного варианта (fraction = 100).
+ * Индекс проблем с правильными ответами по всем вопросам (для любого типа):
+ *  - multichoice / truefalse / numerical — не выбран/не заполнен правильный ответ;
+ *  - shortanswer — не задан ни один непустой эталонный ответ.
  */
 function findAnswerIssues() {
     const issues = [];
     state.quizData.questions.forEach((q, qi) => {
-        if (!q.answers.some(a => a.correct)) {
+        if (q.type === 'shortanswer') {
+            if (!q.answers.some(a => String(a.text ?? '').trim())) {
+                issues.push({ question: qi, reason: 'не задан эталонный ответ' });
+            }
+        } else if (!hasValidCorrectAnswer(q)) {
             issues.push({ question: qi, reason: 'не выбран правильный вариант' });
         }
     });
@@ -1114,7 +1355,7 @@ function updatePublishReadiness() {
     const issues = findAnswerIssues();
     note.classList.toggle('hidden', issues.length === 0);
     if (issues.length) {
-        note.textContent = '⚠ нет правильного ответа: ' + issues.length + ' вопр.';
+        note.textContent = '⚠ проблемы с ответами: ' + issues.length + ' вопр.';
     }
 }
 
@@ -1142,12 +1383,25 @@ function renderReviewPanel() {
 
     body.innerHTML = state.quizData.questions.map((q, qi) => {
         totalQuestions++;
-        const corr = q.answers.filter(a => a.correct).map(a => a.text.trim()).filter(Boolean);
-        const ok = corr.length > 0;
-        const correctText = ok ? '✔ ' + corr.join('; ') : '— правильный вариант не выбран';
+        let correctText;
+        let ok;
+        if (q.type === 'shortanswer') {
+            const refs = q.answers.map(a => String(a.text ?? '').trim()).filter(Boolean);
+            ok = refs.length > 0;
+            correctText = ok ? '✔ ' + refs.join('; ') : '— эталонный ответ не задан';
+        } else if (q.type === 'numerical') {
+            const refs = q.answers.filter(a => a.correct && String(a.text ?? '').trim())
+                .map(a => `${String(a.text).trim()} ± ${Number.isFinite(a.tolerance) ? a.tolerance : 0}`);
+            ok = refs.length > 0;
+            correctText = ok ? '✔ ' + refs.join('; ') : '— эталонное число не задано';
+        } else {
+            const corr = q.answers.filter(a => a.correct).map(a => a.text.trim()).filter(Boolean);
+            ok = corr.length > 0;
+            correctText = ok ? '✔ ' + corr.join('; ') : '— правильный вариант не выбран';
+        }
         if (!ok) badQuestions++;
         return `<div class="review-item ${ok ? 'ok' : 'bad'}" data-q="${qi}" title="Открыть вопрос ${qi + 1} в редакторе">
-            <div class="review-q"><span class="badge badge-choice">Multichoice</span> Q${qi + 1}: ${escHtml(q.name || '(без названия)')}</div>
+            <div class="review-q"><span class="badge badge-${q.type || 'multichoice'}">${qtypeName(q.type)}</span> Q${qi + 1}: ${escHtml(q.name || '(без названия)')}</div>
             <div class="review-a ${ok ? '' : 'missing'}">${escHtml(correctText)}</div>
         </div>`;
     }).join('');
