@@ -121,7 +121,7 @@ const crushBadge = document.getElementById('crushBadge');
 const headerBadge = document.getElementById('headerBadge');
 const crushAttemptsPill = document.getElementById('crushAttemptsPill');
 const checkAnswerBtn = document.getElementById('checkAnswerBtn'); // «Проверить ответ» — единая кнопка проверки (CheckMode и/или CrushMode)
-const crushNextBtn = document.getElementById('crushNextBtn');     // «Дальше →» (CrushMode, появляется только после верного ответа)
+
 
 // ===== Вспомогательные функции =====
 function isAnyOverlayOpen() {
@@ -636,9 +636,12 @@ function startTest() {
 // Единая логика без дублирующихся кнопок:
 //   «Назад»            — только если возврат разрешён (не в CrushMode);
 //   «Проверить ответ»  — одна кнопка, показывается в CheckMode и/или CrushMode;
-//   «Дальше →»         — в CrushMode, только после верного ответа;
-//   «Вперёд →»         — обычный режим / CheckMode (в CrushMode скрыта);
-//   «Завершить тест»   — на последнем вопросе (в CrushMode — после верного ответа).
+//   «Вперёд →»         — ЕДИНСТВЕННАЯ кнопка движения вперёд. В обычном режиме /
+//                        CheckMode активна всегда (кроме последнего вопроса);
+//                        в CrushMode скрыта до верного ответа, после верного
+//                        ответа появляется с подписью «Дальше →»;
+//   «Завершить тест»   — на последнем вопросе (в CrushMode — только после верного
+//                        ответа). Отдельной кнопки «Дальше» больше нет.
 function updateNavigation() {
     const last = currentQuestionIndex === questions.length - 1;
 
@@ -659,12 +662,13 @@ function updateNavigation() {
     }
 
     if (crushMode) {
-        // «Дальше →» открывается только после верного ответа
-        crushNextBtn.classList.toggle('hidden', crushState !== CRUSH_STATE.CORRECT);
-        nextBtn.classList.add('hidden');
-        finishBtn.classList.add('hidden');
+        const correct = crushState === CRUSH_STATE.CORRECT;
+        // Движение вперёд — только через единственную кнопку nextBtn/finishBtn
+        nextBtn.classList.toggle('hidden', !correct || last);
+        nextBtn.textContent = 'Дальше →';
+        finishBtn.classList.toggle('hidden', !(correct && last));
     } else {
-        crushNextBtn.classList.add('hidden');
+        nextBtn.textContent = 'Вперёд →';
         nextBtn.classList.toggle('hidden', last);
         finishBtn.classList.toggle('hidden', !last);
     }
@@ -908,9 +912,16 @@ function q_isCrushPassed(idx) {
     return questions[idx]._checked === true && questions[idx].isCorrect === true;
 }
 
+// Единая кнопка движения вперёд («Вперёд →» / «Дальше →»).
+// В CrushMode переход возможен только после верного ответа (кнопка скрыта до него),
+// на последнем вопросе вместо неё показывается «Завершить тест».
 function handleNext() {
+    if (crushMode && crushState !== CRUSH_STATE.CORRECT) return;
     if (currentQuestionIndex < questions.length - 1) {
+        if (crushMode) crushState = CRUSH_STATE.ANSWERING;
         goToQuestion(currentQuestionIndex + 1);
+    } else {
+        finishTest();
     }
 }
 
@@ -954,17 +965,6 @@ function handleCrushCheck() {
     }
 }
 
-// Кнопка «Дальше →»: переход к следующему вопросу (или завершение на последнем).
-// Переход возможен только после верного ответа (crushState === CORRECT).
-function handleCrushNext() {
-    if (crushState !== CRUSH_STATE.CORRECT) return;
-    if (currentQuestionIndex < questions.length - 1) {
-        crushState = CRUSH_STATE.ANSWERING;
-        goToQuestion(currentQuestionIndex + 1);
-    } else {
-        finishTest();
-    }
-}
 
 // Перезапуск сессии в CrushMode (после трёх ошибок): возврат к первому вопросу
 function restartCrushSession() {
@@ -1145,7 +1145,6 @@ prevBtn.addEventListener('click', () => goToQuestion(currentQuestionIndex - 1));
 nextBtn.addEventListener('click', handleNext);
 finishBtn.addEventListener('click', finishTest);
 checkAnswerBtn.addEventListener('click', handleCheckClick);
-crushNextBtn.addEventListener('click', handleCrushNext);
 
 restartBtn.addEventListener('click', () => startTest());
 changeNameBtn.addEventListener('click', openNameOverlay);

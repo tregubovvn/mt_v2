@@ -143,6 +143,22 @@
                         <h2>Вопрос <span id="questionNumber">1</span></h2>
                         <div class="settings-grid settings-compact">
                             <div>
+                                <label class="label" for="qType">Тип вопроса (question type)</label>
+                                <select id="qType" class="input-base" title="Поддерживаемые типы Moodle XML: multichoice, truefalse, shortanswer, numerical">
+                                    <option value="multichoice">Множественный выбор (multichoice)</option>
+                                    <option value="truefalse">Верно / Неверно (truefalse)</option>
+                                    <option value="shortanswer">Короткий ответ (shortanswer)</option>
+                                    <option value="numerical">Числовой (numerical)</option>
+                                </select>
+                            </div>
+                            <div id="qSingleRow">
+                                <label class="label" for="qSingle">Выбор ответов (single)</label>
+                                <label class="switch-inline" title="single=false — несколько правильных вариантов (множественный выбор); single=true — один правильный вариант">
+                                    <input type="checkbox" id="qSingle">
+                                    <span class="switch-caption">Несколько правильных</span>
+                                </label>
+                            </div>
+                            <div>
                                 <label class="label" for="qShuffle">Перемешивать ответы (shuffleanswers)</label>
                                 <select id="qShuffle" class="input-base">
                                     <option value="true">true — да</option>
@@ -199,11 +215,11 @@
 
                     <div class="questions-section">
                         <div class="questions-toolbar">
-                            <h3>Варианты ответов</h3>
+                            <h3 id="answersTitle">Варианты ответов</h3>
                             <button type="button" class="btn btn-sm" id="btnAddAnswer" title="Добавить вариант ответа">+ Добавить ответ</button>
                         </div>
                         <div id="answersContainer"></div>
-                        <p class="hint">Нажмите на кружок слева, чтобы отметить правильный ответ (fraction = 100). Остальные получат fraction = 0.</p>
+                        <p class="hint" id="answersHint">Нажмите на кружок слева, чтобы отметить правильный ответ (fraction = 100). Остальные получат fraction = 0.</p>
                     </div>
                 </div>
 
