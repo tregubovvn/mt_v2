@@ -1,0 +1,99 @@
+
+[CrushMode]
+Ошибка автозагрузки теста: Error: no network in test
+    at w.fetch (/workspace/tmp/test_modes.js:15:36)
+    at fetchAndParseTest (http://localhost/?name=x.xml&crushmode=true:298:28)
+    at autoLoadTest (http://localhost/?name=x.xml&crushmode=true:310:15)
+    at Document.init (http://localhost/?name=x.xml&crushmode=true:1627:9)
+    at Document.callTheUserObjectsOperation (/workspace/node_modules/jsdom/lib/generated/idl/EventListener.js:26:30)
+    at innerInvokeEventListeners (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:360:16)
+    at invokeEventListeners (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:296:3)
+    at DocumentImpl._dispatch (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:243:9)
+    at fireAnEvent (/workspace/node_modules/jsdom/lib/jsdom/living/helpers/events.js:18:36)
+    at dispatchEvent (/workspace/node_modules/jsdom/lib/jsdom/living/nodes/Document-impl.js:532:9)
+Найдено 3 вопросов, тема: Демо: формулы и таблицы
+  ✓ «Назад» скрыта (возврат запрещён)
+  ✓ «Проверить ответ» видна (одна кнопка)
+  ✓ дубль «Проверить» удалён из DOM
+  ✓ «Вперёд»/«Завершить» скрыты
+  ✓ дубль «Дальше →» удалён из DOM
+  ✓ старт с первого вопроса
+  ✓ ошибка засчитана (1)
+  ✓ неверный выбран красным
+  ✓ правильный НЕ раскрыт
+  ✓ кнопка движения вперёд всё ещё скрыта
+  ✓ вторая ошибка засчитана
+  ✓ старая подсветка снята, новый неверный — красный
+  ✓ 3 ошибки -> возврат к первому вопросу, счётчик сброшен
+  ✓ ответы очищены после рестарта
+  ✓ верный ответ -> состояние CORRECT
+  ✓ верный вариант зелёный
+  ✓ единая кнопка открылась с подписью «Дальше →»
+  ✓ «Проверить ответ» отключена после верного
+  ✓ единая кнопка «Дальше →» перешла к следующему вопросу
+  ✓ на новом вопросе кнопка вперёд скрыта до верного ответа
+  ✓ прямой переход вперёд заблокирован (только через «Дальше →»)
+  ✓ вопросы идут в порядке расположения в тесте
+
+[CrushMode + CheckMode]
+Ошибка автозагрузки теста: Error: no network in test
+    at w.fetch (/workspace/tmp/test_modes.js:15:36)
+    at fetchAndParseTest (http://localhost/?name=x.xml&crushmode=true&checkmode=true:298:28)
+    at autoLoadTest (http://localhost/?name=x.xml&crushmode=true&checkmode=true:310:15)
+    at Document.init (http://localhost/?name=x.xml&crushmode=true&checkmode=true:1627:9)
+    at Document.callTheUserObjectsOperation (/workspace/node_modules/jsdom/lib/generated/idl/EventListener.js:26:30)
+    at innerInvokeEventListeners (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:360:16)
+    at invokeEventListeners (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:296:3)
+    at DocumentImpl._dispatch (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:243:9)
+    at fireAnEvent (/workspace/node_modules/jsdom/lib/jsdom/living/helpers/events.js:18:36)
+    at dispatchEvent (/workspace/node_modules/jsdom/lib/jsdom/living/nodes/Document-impl.js:532:9)
+Найдено 3 вопросов, тема: Демо: формулы и таблицы
+  ✓ одна общая кнопка проверки
+  ✓ проверка работает по правилам CrushMode
+  ✓ правильный ответ не раскрыт подсказкой
+
+[CheckMode]
+Ошибка автозагрузки теста: Error: no network in test
+    at w.fetch (/workspace/tmp/test_modes.js:15:36)
+    at fetchAndParseTest (http://localhost/?name=x.xml&checkmode=true:298:28)
+    at autoLoadTest (http://localhost/?name=x.xml&checkmode=true:310:15)
+    at Document.init (http://localhost/?name=x.xml&checkmode=true:1627:9)
+    at Document.callTheUserObjectsOperation (/workspace/node_modules/jsdom/lib/generated/idl/EventListener.js:26:30)
+    at innerInvokeEventListeners (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:360:16)
+    at invokeEventListeners (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:296:3)
+    at DocumentImpl._dispatch (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:243:9)
+    at fireAnEvent (/workspace/node_modules/jsdom/lib/jsdom/living/helpers/events.js:18:36)
+    at dispatchEvent (/workspace/node_modules/jsdom/lib/jsdom/living/nodes/Document-impl.js:532:9)
+Найдено 3 вопросов, тема: Демо: формулы и таблицы
+  ✓ кнопка «Проверить ответ» есть (одна)
+  ✓ навигация Назад/Вперёд доступна
+  ✓ единая кнопка вперёд подписана «Вперёд →» без дублей
+  ✓ неверный выбор — красный
+  ✓ правильный вариант — зелёный
+  ✓ кнопка проверки отключена (ответ зафиксирован)
+  ✓ изменить ответ после проверки нельзя
+  ✓ фидбек «Неверно» с правильным ответом
+  ✓ переход «Вперёд» доступен после ошибки (сколько угодно ошибок)
+  ✓ возврат назад разрешён в CheckMode
+  ✓ после возврата на проверенный вопрос кнопка проверки остаётся отключённой
+  ✓ на последнем вопросе активна «Завершить тест»
+
+[Обычный режим]
+Ошибка автозагрузки теста: Error: no network in test
+    at w.fetch (/workspace/tmp/test_modes.js:15:36)
+    at fetchAndParseTest (http://localhost/?name=x.xml&:298:28)
+    at autoLoadTest (http://localhost/?name=x.xml&:310:15)
+    at Document.init (http://localhost/?name=x.xml&:1627:9)
+    at Document.callTheUserObjectsOperation (/workspace/node_modules/jsdom/lib/generated/idl/EventListener.js:26:30)
+    at innerInvokeEventListeners (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:360:16)
+    at invokeEventListeners (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:296:3)
+    at DocumentImpl._dispatch (/workspace/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:243:9)
+    at fireAnEvent (/workspace/node_modules/jsdom/lib/jsdom/living/helpers/events.js:18:36)
+    at dispatchEvent (/workspace/node_modules/jsdom/lib/jsdom/living/nodes/Document-impl.js:532:9)
+Найдено 3 вопросов, тема: Демо: формулы и таблицы
+  ✓ кнопки проверки нет
+  ✓ Назад/Вперёд есть
+  ✓ свободная навигация работает
+  ✓ возврат назад работает
+
+ИТОГ: 41 пройдено, 0 провалено

@@ -71,7 +71,6 @@ let crushMode = false;        // CrushMode=true   — проверка при п
 let headerShow = false;       // HeaderShow=true  — показывать заголовок вопроса из <name>
 let crushState = CRUSH_STATE.ANSWERING;
 let crushErrors = 0;          // сколько ошибок сделано в текущей сессии (CrushMode)
-let q_wasCorrectHere = false; // служебный флаг: переносим состояние «верно» на перерисовку следующего вопроса
 let checkedQuestions = [];    // какие вопросы уже проверены (CheckMode)
 let feedbackStore = [];       // {ok, correctTexts} для восстановления фидбэка при навигации (CheckMode)
 let testTopicName = '';       // содержимое <topicName> из XML (если есть)
@@ -873,19 +872,11 @@ function updateNavigation() {
         }
     }
 
-    // Описание без ответа — проверять нечего; «Дальше →» открываем сразу.
-    // crushState при этом ANSWERING, поэтому состояние переносим флагом
-    // q_wasCorrectHere (его проверяют goToQuestion/handleNext/renderQuestion)
+    // Описание без ответа — проверять нечего; «Дальше →» открываем сразу
+    // (handleNext/goToQuestion пропускают описание отдельно, состояние CORRECT
+    //  здесь не выставляется, чтобы оно не «протекло» на следующий вопрос)
     if (q0typeIsDescription(idx)) {
         checkAnswerBtn.classList.add('hidden');
-        if (crushMode && crushState !== CRUSH_STATE.CORRECT) {
-            crushState = CRUSH_STATE.CORRECT;
-            q_wasCorrectHere = true;   // renderQuestion не будет сбрасывать его на этой отрисовке
-        }
-    } else if (crushMode && q_wasCorrectHere) {
-        // мы не на описании, а флаг переноса «верно» не востребован — снимаем его,
-        // иначе он ложно откроет переход на другом вопросе
-        q_wasCorrectHere = false;
     }
 
     if (crushMode) {
@@ -916,13 +907,9 @@ function renderQuestion() {
     const q = questions[idx];
     questionsContainer.innerHTML = '';
 
-    // CrushMode: состояние «верно» относится к предыдущему вопросу.
-    // Если перерисовка идёт НЕ через handleNext (q_wasCorrectHere=false),
-    // сбрасываем его, чтобы «Дальше →» не «протекла» на новый вопрос
-    if (crushMode && crushState === CRUSH_STATE.CORRECT && !q_wasCorrectHere) {
-        crushState = CRUSH_STATE.ANSWERING;
-    }
-    q_wasCorrectHere = false;
+    // CrushMode: состояние CORRECT легитимно «переживает» перерисовку при переходе
+    // «Дальше →» и сбрасывается только при первой проверке нового вопроса
+    // (handleCrushCheck) либо при возврате из restartCrushSession.
 
     const card = document.createElement('div');
     card.className = 'question';
@@ -1177,28 +1164,6 @@ function selectAnswer(i) {
         return;
     }
 
-    const q = questions[currentQuestionIndex];
-    if (!q || i < 0 || i >= q.answers.length) return;
-
-    // Множественный выбор (single=false): клик переключает чекбокс, ответ — массив индексов
-    if (q.type === 'multichoice' && !q.single) {
-        let sel = Array.isArray(userAnswers[currentQuestionIndex])
-            ? [...userAnswers[currentQuestionIndex]] : [];
-        sel = sel.includes(i) ? sel.filter(x => x !== i) : [...sel, i].sort((a, b) => a - b);
-        userAnswers[currentQuestionIndex] = sel;
-
-        const options = questionsContainer.querySelectorAll('.answer-option');
-        options.forEach((el, idx) => {
-            const box = el.querySelector('input[type="checkbox"]');
-            const on = sel.includes(idx);
-            if (box) box.checked = on;
-            el.classList.toggle('selected', on);
-            if (crushMode) el.classList.remove('correct', 'incorrect');
-        });
-        updateNavigation();
-        return;
-    }
-
     userAnswers[currentQuestionIndex] = i;
 
     const options = questionsContainer.querySelectorAll('.answer-option');
@@ -1269,12 +1234,11 @@ function checkCurrentAnswer() {
             el.classList.remove('correct', 'incorrect');
             if (crushMode) {
                 // CrushMode: правильный ответ НЕ раскрываем до того, как студент
-                // найдёт его сам. Зелёным — найденный верный вариант, красным — неверный выбор
-                if (isCorrect && q.answers[i].isCorrect) el.classList.add('correct');
-                else if (!isCorrect) {
-                    const chosen = multi ? (Array.isArray(sel) && sel.includes(i)) : i === sel;
-                    if (chosen) el.classList.add('incorrect');
-                }
+                // найдёт его сам. Зелёным — найденный верный вариант (в т.ч. каждый
+                // из выбранных при множественном выборе), красным — неверный выбор
+                const chosen = multi ? (Array.isArray(sel) && sel.includes(i)) : i === sel;
+                if (chosen && q.answers[i].isCorrect) el.classList.add('correct');
+                else if (chosen) el.classList.add('incorrect');
             } else {
                 // CheckMode / обычный режим: выбранный вариант — зелёный (верно) или
                 // красный (ошибка фиксируется), правильный подсвечивается зелёным
@@ -1361,12 +1325,11 @@ function restoreFeedback(idx, container) {
 function goToQuestion(idx) {
     if (idx < 0 || idx >= questions.length) return;
     if (crushMode) {
-        // В CrushMode «Назад» запрещён; вперёд — только после верного ответа.
-        // Кнопка «Дальше →» на описании открывается через q_wasCorrectHere,
-        // поэтому сюда заходим с уже сброшенным crushState — не блокируем переход
+        // В CrushMode «Назад» запрещён; вперёд — только после верного ответа
+        // (или если текущий вопрос — описание без ответа)
         if (idx < currentQuestionIndex) return;
         if (idx > currentQuestionIndex && crushState !== CRUSH_STATE.CORRECT &&
-            !q_wasCorrectHere) return;
+            !q0typeIsDescription(currentQuestionIndex)) return;
     }
     currentQuestionIndex = idx;
     renderQuestion();
@@ -1386,10 +1349,13 @@ function handleNext() {
     if (crushMode && crushState !== CRUSH_STATE.CORRECT &&
         !q0typeIsDescription(currentQuestionIndex)) return;
     if (currentQuestionIndex < questions.length - 1) {
-        // «Дальше →» больше не нужна на следующем вопросе — сбрасываем состояние
-        // заранее, до перерисовки (renderQuestion сам ничего не сбрасывает)
-        if (crushMode) { crushState = CRUSH_STATE.ANSWERING; q_wasCorrectHere = false; }
         goToQuestion(currentQuestionIndex + 1);
+        // Переход выполнен — состояние «верно» больше не нужно: сбрасываем его,
+        // иначе на следующем вопросе кнопка проверки осталась бы заблокированной
+        if (crushMode && crushState === CRUSH_STATE.CORRECT) {
+            crushState = CRUSH_STATE.ANSWERING;
+            updateNavigation();
+        }
     } else {
         finishTest();
     }
@@ -1406,7 +1372,7 @@ function handleCrushCheck() {
     // После 3 ошибок проверка блокируется до перезапуска сессии
     if (crushState === CRUSH_STATE.RESTART) return;
     // Ответ уже верный — повторная проверка не нужна
-    if (crushState === CRUSH_STATE.CORRECT) return;
+    if (crushState === CRUSH_STATE.CORRECT) return true;
 
     if (!hasAnswer(currentQuestionIndex)) {
         alert('Сначала дайте ответ на вопрос');

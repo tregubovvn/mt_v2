@@ -1,0 +1,44 @@
+Найдено 7 вопросов
+Not implemented: Window's scrollTo() method
+Not implemented: Window's scrollTo() method
+Найдено 7 вопросов
+Not implemented: Window's scrollTo() method
+Not implemented: Window's scrollTo() method
+PASS - parsed 7 questions
+PASS - types
+PASS - multi single=false
+PASS - cloze blanks=2
+PASS - tf correct=true
+PASS - num tolerance
+PASS - start idx0
+PASS - q0 checked correct
+PASS - q0 locked after check
+PASS - q0 answer locked
+PASS - multi sel array
+PASS - multi correct
+PASS - tf correct
+PASS - short match case-insens
+PASS - short wrong
+PASS - num within tolerance
+PASS - num out of tolerance
+PASS - cloze all correct
+PASS - cloze one wrong
+PASS - cloze incomplete -> answered but wrong
+PASS - description answered
+PASS - results shown
+PASS - score text
+PASS - crush prev hidden
+PASS - crush next hidden before correct
+PASS - crush check visible
+PASS - crush error counted
+PASS - crush still answering
+PASS - crush correct state
+PASS - crush next visible now
+PASS - crush advanced
+PASS - crush multi partial error
+PASS - crush restarted at 0 after 3rd error
+PASS - crush answers cleared
+PASS - crush multi correct (full set)
+PASS - reached truefalse question
+PASS - crush new session error counted
+ALL_TESTS_PASSED

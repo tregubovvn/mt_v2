@@ -165,12 +165,31 @@ const testCode = `
   {
     const q1 = questions[1];
     const okIdxs = () => q1.answers.map((a,i)=>a.isCorrect?i:-1).filter(i=>i>=0);
-    selectAnswer(okIdxs()[0]);            // только один верный — неполный ответ
+    selectAnswer(okIdxs()[0]);            // только один верный — неполный ответ (2-я ошибка)
     handleCheckClick();
-    t('crush multi error', crushErrors===2 && crushState===CRUSH_STATE.ANSWERING);
-    okIdxs().forEach(i => { if (!(userAnswers[1]||[]).includes(i)) selectAnswer(i); });
+    t("crush multi partial error", crushErrors===2 && crushState===CRUSH_STATE.ANSWERING);
+    const i5b = q1.answers.findIndex(a=>!a.isCorrect);
+    if (!(userAnswers[1]||[]).includes(i5b)) selectAnswer(i5b);   // + неверный вариант (3-я ошибка)
     handleCheckClick();
-    t('crush multi correct', crushState===CRUSH_STATE.CORRECT);
+  }
+  // --- после 3 ошибок сессия сброшена: возврат к началу ---
+  t('crush restarted at 0 after 3rd error', currentQuestionIndex===0 && crushErrors===0 && crushState===CRUSH_STATE.ANSWERING);
+  t('crush answers cleared', userAnswers.every(a=>a===null||(Array.isArray(a)&&a.length===0)) && userTextAnswers.every(v=>!v));
+  // --- полный верный множественный ответ во второй сессии -> CORRECT ---
+  {
+    handleNext === null; // no-op
+    goToQuestion(1);     // назад нельзя? idx<current блокирует... current==0, idx==1 — вперёд без CORRECT: блокируется. Пройдём Q0 верно.
+    if (currentQuestionIndex===0) {
+      const q0r = questions[0];
+      selectAnswer(q0r.answers.findIndex(a=>a.isCorrect));
+      handleCheckClick();
+      handleNext();
+    }
+    const q1b = questions[1];
+    q1b.answers.map((a,i)=>a.isCorrect?i:-1).filter(i=>i>=0).forEach(i=>selectAnswer(i));
+    handleCheckClick();
+    t('crush multi correct (full set)', crushState===CRUSH_STATE.CORRECT && crushErrors===0);
+    handleNext();
   }
   // --- прохождение оставшихся вопросов «в верном порядке» до truefalse (q2) ---
   function correctNow() {
@@ -195,13 +214,12 @@ const testCode = `
     if (crushState===CRUSH_STATE.CORRECT){ handleNext(); }
   }
   t('reached truefalse question', questions[currentQuestionIndex].type==='truefalse');
-  // --- третья ошибка (заведомо неверный ответ на truefalse) -> возврат к началу ---
+  // --- ошибка в новой сессии засчитывается с нуля ---
   {
     const q2 = questions[currentQuestionIndex];
     selectAnswer(q2.answers.findIndex(a=>!a.isCorrect));
     handleCheckClick();
-    t('crush restarted at 0 after 3rd error', currentQuestionIndex===0 && crushErrors===0 && crushState===CRUSH_STATE.ANSWERING);
-    t('crush answers cleared', userAnswers.every(a=>a===null||(Array.isArray(a)&&a.length===0)) && userTextAnswers.every(v=>!v));
+    t('crush new session error counted', crushErrors===1 && crushState===CRUSH_STATE.ANSWERING);
   }
 
   return R;
