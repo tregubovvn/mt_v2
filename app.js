@@ -1177,6 +1177,28 @@ function selectAnswer(i) {
         return;
     }
 
+    const q = questions[currentQuestionIndex];
+    if (!q || i < 0 || i >= q.answers.length) return;
+
+    // Множественный выбор (single=false): клик переключает чекбокс, ответ — массив индексов
+    if (q.type === 'multichoice' && !q.single) {
+        let sel = Array.isArray(userAnswers[currentQuestionIndex])
+            ? [...userAnswers[currentQuestionIndex]] : [];
+        sel = sel.includes(i) ? sel.filter(x => x !== i) : [...sel, i].sort((a, b) => a - b);
+        userAnswers[currentQuestionIndex] = sel;
+
+        const options = questionsContainer.querySelectorAll('.answer-option');
+        options.forEach((el, idx) => {
+            const box = el.querySelector('input[type="checkbox"]');
+            const on = sel.includes(idx);
+            if (box) box.checked = on;
+            el.classList.toggle('selected', on);
+            if (crushMode) el.classList.remove('correct', 'incorrect');
+        });
+        updateNavigation();
+        return;
+    }
+
     userAnswers[currentQuestionIndex] = i;
 
     const options = questionsContainer.querySelectorAll('.answer-option');
