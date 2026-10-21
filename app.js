@@ -56,7 +56,8 @@ const DEMO_QUIZ_XML = `<?xml version="1.0" encoding="UTF-8"?>
 let questions = [];           // распарсенные вопросы [{name, text, type, single, answers, clozeBlanks, isCorrect, _checked}]
 let currentQuestionIndex = 0;
 let userAnswers = [];         // индекс(ы) выбранного варианта (null — нет ответа; массив — множественный выбор)
-let userTextAnswers = [];     // введённый текст для shortanswer / numerical / cloze
+let userTextAnswers = [];     // введённый текст для shortanswer / numerical
+let userClozeAnswers = [];    // значения пропусков cloze: [{blankIndex: value}, ...] по вопросам
 let startTime = null;         // момент старта теста (Date.now())
 let timerInterval = null;
 let timeSpent = 0;            // секунды с момента старта теста
@@ -70,6 +71,7 @@ let crushMode = false;        // CrushMode=true   — проверка при п
 let headerShow = false;       // HeaderShow=true  — показывать заголовок вопроса из <name>
 let crushState = CRUSH_STATE.ANSWERING;
 let crushErrors = 0;          // сколько ошибок сделано в текущей сессии (CrushMode)
+let q_wasCorrectHere = false; // служебный флаг: переносим состояние «верно» на перерисовку следующего вопроса
 let checkedQuestions = [];    // какие вопросы уже проверены (CheckMode)
 let feedbackStore = [];       // {ok, correctTexts} для восстановления фидбэка при навигации (CheckMode)
 let testTopicName = '';       // содержимое <topicName> из XML (если есть)
@@ -509,14 +511,10 @@ function parseMoodleXML(xmlContent) {
             if (textNodes.length > 0) questionText = textNodes[0].textContent.trim();
         }
 
-        // Description — вопрос-описание без ответа: текст из <description>,
+        // Description — вопрос-описание без ответа: текст в <questiontext>,
         // выводится как обычный текст, проверке не подлежит
         if (type === 'description') {
-            const dNodes = node.getElementsByTagName('description');
-            if (dNodes.length > 0) {
-                const dt = dNodes[0].getElementsByTagName('text');
-                if (dt.length > 0 && dt[0].textContent.trim()) questionText = dt[0].textContent.trim();
-            }
+            // (текст уже взят из <questiontext>; отдельного тега <description> в Moodle нет)
             if (!questionText) continue;
             questions.push({
                 name: questionName, text: processHtmlContent(questionText),
@@ -733,28 +731,27 @@ function hasAnswer(idx) {
         case 'numerical':
             return !!(userTextAnswers[idx] && userTextAnswers[idx].trim());
         case 'cloze':
+            // «Отвечен», если заполнен хотя бы один пропуск (незаполненные
+            // считаются неверными — как в Moodle); иначе ответа нет
             return !!q.clozeBlanks &&
-                q.clozeBlanks.every((b, bi) => getClozeInputValue(bi) !== null);
+                q.clozeBlanks.some((b, bi) => getClozeValue(idx, bi) !== null);
         case 'multichoice':
             if (!q.single) return Array.isArray(userAnswers[idx]) && userAnswers[idx].length > 0;
             return userAnswers[idx] !== null && userAnswers[idx] !== undefined;
-        default: // truefalse / description
+        case 'description':   // вопрос-инструкция: «отвечен» автоматически
+            return true;
+        default: // truefalse
             return userAnswers[idx] !== null && userAnswers[idx] !== undefined;
     }
 }
 
-// Аккуратное чтение значения поля ввода cloze (если оно ещё в DOM)
-function getClozeInputValue(bi) {
-    const el = questionsContainer.querySelector(`[data-cloze-blank="${bi}"]`);
-    if (!el) return null;
-    if (el.tagName === 'SELECT') return el.selectedIndex > 0 ? el.value : null;
-    return el.value.trim() ? el.value : null;
-}
-
-// Текущее значение множественного выбора (массив индексов) из DOM
-function getDomMultiSelection() {
-    const boxes = questionsContainer.querySelectorAll('.answer-option input[type="checkbox"]:checked');
-    return Array.from(boxes).map(b => +b.dataset.index);
+// Аккуратное чтение значения поля ввода cloze из модели (значения сохраняются
+// в userClozeAnswers при каждом изменении, поэтому переживает перерисовки)
+function getClozeValue(idx, bi) {
+    const m = userClozeAnswers[idx];
+    if (!m) return null;
+    const v = m[bi];
+    return (v === undefined || v === null || v === '') ? null : v;
 }
 
 // ===== Оценка ответа на вопрос (без сайд-эффектов для подсветки) =====
@@ -769,24 +766,23 @@ function evaluateQuestion(q, idx) {
             return { answered: true, correct: matchShortAnswer(t, q.answers) };
         }
         case 'cloze': {
+            let allCorrect = true;
             const vals = [];
-            let allFilled = true, allCorrect = true;
             q.clozeBlanks.forEach((b, bi) => {
-                const v = getClozeInputValue(bi);
+                const v = getClozeValue(idx, bi);   // null — пропуск не заполнен
                 vals.push(v);
-                if (v === null) { allFilled = false; return; }
-                const ok = b.type === 'MCMS'
+                const ok = v !== null && (b.type === 'MCMS'
                     ? b.answers.some(a => a.correct && a.text === v)
-                    : matchShortAnswer(v, b.answers);
-                if (!ok) allCorrect = false;
+                    : matchShortAnswer(v, b.answers));
+                if (!ok) allCorrect = false;       // незаполненный пропуск = ошибка
             });
-            return { answered: allFilled, correct: allFilled && allCorrect, clozeValues: vals };
+            return { answered: hasAnswer(idx), correct: allCorrect, clozeValues: vals };
         }
         default: { // multichoice / truefalse
             const sel = userAnswers[idx];
             if (!q.single && Array.isArray(sel)) {
                 if (!sel.length) return { answered: false, correct: false };
-                const correctSet = q.answers.map((a, i) => a.isCorrect ? i : -1).filter(i => i >= 0).sort();
+                const correctSet = q.answers.map((a, i) => a.isCorrect ? i : -1).filter(i => i >= 0).sort((a, b) => a - b);
                 const selSorted = [...sel].sort((a, b) => a - b);
                 const eq = correctSet.length === selSorted.length &&
                     correctSet.every((v, k) => v === selSorted[k]);
@@ -806,6 +802,7 @@ function startTest() {
     currentQuestionIndex = 0;
     userAnswers = new Array(questions.length).fill(null);
     userTextAnswers = new Array(questions.length).fill('');
+    userClozeAnswers = new Array(questions.length).fill(null);
     checkedQuestions = new Array(questions.length).fill(false);
     feedbackStore = new Array(questions.length).fill(null);
     questions.forEach(q => {
@@ -876,6 +873,21 @@ function updateNavigation() {
         }
     }
 
+    // Описание без ответа — проверять нечего; «Дальше →» открываем сразу.
+    // crushState при этом ANSWERING, поэтому состояние переносим флагом
+    // q_wasCorrectHere (его проверяют goToQuestion/handleNext/renderQuestion)
+    if (q0typeIsDescription(idx)) {
+        checkAnswerBtn.classList.add('hidden');
+        if (crushMode && crushState !== CRUSH_STATE.CORRECT) {
+            crushState = CRUSH_STATE.CORRECT;
+            q_wasCorrectHere = true;   // renderQuestion не будет сбрасывать его на этой отрисовке
+        }
+    } else if (crushMode && q_wasCorrectHere) {
+        // мы не на описании, а флаг переноса «верно» не востребован — снимаем его,
+        // иначе он ложно откроет переход на другом вопросе
+        q_wasCorrectHere = false;
+    }
+
     if (crushMode) {
         const correct = crushState === CRUSH_STATE.CORRECT;
         // Движение вперёд — только через единственную кнопку nextBtn/finishBtn
@@ -903,6 +915,14 @@ function renderQuestion() {
     const idx = currentQuestionIndex;
     const q = questions[idx];
     questionsContainer.innerHTML = '';
+
+    // CrushMode: состояние «верно» относится к предыдущему вопросу.
+    // Если перерисовка идёт НЕ через handleNext (q_wasCorrectHere=false),
+    // сбрасываем его, чтобы «Дальше →» не «протекла» на новый вопрос
+    if (crushMode && crushState === CRUSH_STATE.CORRECT && !q_wasCorrectHere) {
+        crushState = CRUSH_STATE.ANSWERING;
+    }
+    q_wasCorrectHere = false;
 
     const card = document.createElement('div');
     card.className = 'question';
@@ -935,7 +955,7 @@ function renderQuestion() {
     card.appendChild(textEl);
 
     const locked = (checkMode && !crushMode && checkedQuestions[idx]) ||
-                   (crushMode && crushState !== CRUSH_STATE.ANSWERING);
+                   (crushMode && crushState === CRUSH_STATE.CORRECT);
 
     // Поле ввода для shortanswer / numerical
     if (q.type === 'shortanswer' || q.type === 'numerical') {
@@ -952,8 +972,9 @@ function renderQuestion() {
 
             const letter = document.createElement('div');
             letter.className = 'answer-letter';
+            let box = null;
             if (multi) {
-                const box = document.createElement('input');
+                box = document.createElement('input');
                 box.type = 'checkbox';
                 box.dataset.index = i;
                 box.checked = Array.isArray(userAnswers[idx]) && userAnswers[idx].includes(i);
@@ -969,7 +990,7 @@ function renderQuestion() {
 
             // Восстановление выбранного/проверенного состояния
             if (!multi && userAnswers[idx] === i) option.classList.add('selected');
-            if (multi && boxChecked(option)) option.classList.add('selected');
+            if (multi && box.checked) option.classList.add('selected');
             if (isChecked(idx)) {
                 if (crushMode) {
                     // CrushMode: правильный ответ не раскрываем.
@@ -980,7 +1001,7 @@ function renderQuestion() {
                 } else {
                     // CheckMode / обычный режим: выбранный вариант — зелёный (верно)
                     // или красный (ошибка фиксируется), правильный подсвечивается зелёным
-                    const chosen = multi ? boxChecked(option) : userAnswers[idx] === i;
+                    const chosen = multi ? box.checked : userAnswers[idx] === i;
                     if (chosen) option.classList.add(answer.isCorrect ? 'correct' : 'incorrect');
                     if (answer.isCorrect) option.classList.add('correct');
                 }
@@ -1007,12 +1028,6 @@ function renderQuestion() {
     updateCounters();
 
     applyMathJax();
-}
-
-// Чекбокс варианта множественного выбора отмечен?
-function boxChecked(optionEl) {
-    const b = optionEl.querySelector('input[type="checkbox"]');
-    return !!(b && b.checked);
 }
 
 // Поле ручного ввода ответа (shortanswer / numerical)
@@ -1112,6 +1127,11 @@ function saveClozeValue(el, bi) {
     updateNavigation();
 }
 
+// Вопрос-описание (instruction) — ответа нет, проверять нечего
+function q0typeIsDescription(idx) {
+    return !!(questions[idx] && questions[idx].type === 'description');
+}
+
 function updateCounters() {
     currentQuestionElement.textContent = currentQuestionIndex + 1;
     progressFill.style.width = ((currentQuestionIndex + 1) / questions.length * 100) + '%';
@@ -1133,7 +1153,29 @@ function selectAnswer(i) {
     // CheckMode (без CrushMode): после проверки ошибка зафиксирована, менять ответ нельзя
     if (checkMode && !crushMode && checkedQuestions[currentQuestionIndex]) return;
     // CrushMode: выбор заблокирован только после верного ответа (до «Дальше →»)
-    if (crushMode && crushState !== CRUSH_STATE.ANSWERING) return;
+    if (crushMode && crushState === CRUSH_STATE.CORRECT && !q0typeIsDescription(currentQuestionIndex)) return;
+
+    const q = questions[currentQuestionIndex];
+    if (!q || i < 0 || i >= q.answers.length) return;
+
+    // Множественный выбор (single=false): клик переключает чекбокс, ответ — массив индексов
+    if (q.type === 'multichoice' && !q.single) {
+        let sel = Array.isArray(userAnswers[currentQuestionIndex])
+            ? [...userAnswers[currentQuestionIndex]] : [];
+        sel = sel.includes(i) ? sel.filter(x => x !== i) : [...sel, i].sort((a, b) => a - b);
+        userAnswers[currentQuestionIndex] = sel;
+
+        const options = questionsContainer.querySelectorAll('.answer-option');
+        options.forEach((el, idx) => {
+            const box = el.querySelector('input[type="checkbox"]');
+            const on = sel.includes(idx);
+            if (box) box.checked = on;
+            el.classList.toggle('selected', on);
+            if (crushMode) el.classList.remove('correct', 'incorrect');
+        });
+        updateNavigation();
+        return;
+    }
 
     userAnswers[currentQuestionIndex] = i;
 
@@ -1156,44 +1198,82 @@ function handleCheckClick() {
     else checkCurrentAnswer();
 }
 
-// ===== Проверка ответа =====
+// ===== Проверка ответа (CheckMode / обычный режим) =====
+// Единая точка проверки для всех типов вопросов: multichoice (в т.ч. множественный
+// выбор), truefalse, shortanswer, numerical, cloze. Ответ фиксируется, ошибка
+// подсвечивается красным, правильный вариант — зелёным; количество ошибок не
+// ограничено, переход дальше открыт сразу после получения ответа.
 function checkCurrentAnswer() {
     const idx = currentQuestionIndex;
     const q = questions[idx];
-    const selected = userAnswers[idx];
 
-    if (selected === null || selected === undefined) {
+    if (!hasAnswer(idx)) {
         showNoSelectionHint();
         return false;
     }
 
-    const isCorrect = q.answers[selected].isCorrect;
+    const ev = evaluateQuestion(q, idx);
+    const isCorrect = ev.correct;
     q.isCorrect = isCorrect;
     // Вопрос помечен проверенным всегда — так «пройденные» вопросы корректно
     // засчитываются в результатах, если проверка шла кнопкой
     q._checked = true;
 
-    // Подсветка вариантов
-    const options = questionsContainer.querySelectorAll('.answer-option');
-    options.forEach((el, i) => {
-        el.classList.remove('correct', 'incorrect');
-        if (crushMode) {
-            // CrushMode: правильный ответ НЕ раскрываем до того, как студент
-            // найдёт его сам. Зелёным — найденный верный вариант, красным — неверный выбор
-            if (isCorrect && q.answers[i].isCorrect) el.classList.add('correct');
-            else if (!isCorrect && i === selected) el.classList.add('incorrect');
-        } else {
-            // CheckMode / обычный режим: выбранный вариант — зелёный (верно) или
-            // красный (ошибка фиксируется), правильный подсвечивается зелёным
-            if (i === selected) el.classList.add(isCorrect ? 'correct' : 'incorrect');
-            if (q.answers[i].isCorrect) el.classList.add('correct');
+    if (q.type === 'cloze') {
+        // Подсветка пропусков: верные — зелёные, неверные — красные;
+        // правильные значения не раскрываем (подсказку даёт фидбек)
+        q.clozeBlanks.forEach((b, bi) => {
+            const el = questionsContainer.querySelector(`[data-cloze-blank="${bi}"]`);
+            if (!el) return;
+            const v = getClozeValue(idx, bi);
+            const okHere = b.type === 'MCMS'
+                ? b.answers.some(a => a.correct && a.text === v)
+                : matchShortAnswer(v, b.answers);
+            el.classList.add(okHere ? 'correct' : 'incorrect');
+            el.disabled = !(crushMode && !isCorrect);
+        });
+    } else if (q.type === 'shortanswer' || q.type === 'numerical') {
+        const input = questionsContainer.querySelector('.text-answer-input');
+        if (input) {
+            input.classList.add(isCorrect ? 'correct' : 'incorrect');
+            input.disabled = !(crushMode && !isCorrect);
         }
-    });
+    } else {
+        // Подсветка вариантов (multichoice / truefalse)
+        const multi = q.type === 'multichoice' && !q.single;
+        const sel = userAnswers[idx];
+        const options = questionsContainer.querySelectorAll('.answer-option');
+        options.forEach((el, i) => {
+            el.classList.remove('correct', 'incorrect');
+            if (crushMode) {
+                // CrushMode: правильный ответ НЕ раскрываем до того, как студент
+                // найдёт его сам. Зелёным — найденный верный вариант, красным — неверный выбор
+                if (isCorrect && q.answers[i].isCorrect) el.classList.add('correct');
+                else if (!isCorrect) {
+                    const chosen = multi ? (Array.isArray(sel) && sel.includes(i)) : i === sel;
+                    if (chosen) el.classList.add('incorrect');
+                }
+            } else {
+                // CheckMode / обычный режим: выбранный вариант — зелёный (верно) или
+                // красный (ошибка фиксируется), правильный подсвечивается зелёным
+                const chosen = multi ? (Array.isArray(sel) && sel.includes(i)) : i === sel;
+                if (chosen) el.classList.add(q.answers[i].isCorrect ? 'correct' : 'incorrect');
+                if (q.answers[i].isCorrect) el.classList.add('correct');
+            }
+        });
+    }
 
     // Тексты правильных ответов сохраняем для фидбэка (выводится в CheckMode;
-    // в CrushMode ответ не раскрываем)
+    // в CrushMode ответ не раскрываем). Для текстовых типов — эталонные ответы.
     if (!crushMode) {
-        const correctTexts = q.answers.filter(a => a.isCorrect).map(a => a.text);
+        let correctTexts = [];
+        if (q.type === 'cloze') {
+            correctTexts = q.clozeBlanks.map(b => (b.answers.find(a => a.correct) || b.answers[0] || {}).text).filter(Boolean);
+        } else {
+            correctTexts = (q.type === 'shortanswer' || q.type === 'numerical')
+                ? q.answers.map(a => a.text)
+                : q.answers.filter(a => a.isCorrect).map(a => a.text);
+        }
         feedbackStore[idx] = { ok: isCorrect, correctTexts };
     }
 
@@ -1208,13 +1288,13 @@ function checkCurrentAnswer() {
     return isCorrect;
 }
 
-// Сообщение «сначала выберите вариант» — в фидбэке (CheckMode) или всплывающе
+// Сообщение «сначала дайте ответ» — в фидбэке (CheckMode) или всплывающе
 function showNoSelectionHint() {
     const fb = questionsContainer.querySelector('.check-feedback');
     if (fb) {
-        fb.innerHTML = '<span style="color:#b45309; font-weight:600;">⚠ Сначала выберите вариант ответа</span>';
+        fb.innerHTML = '<span style="color:#b45309; font-weight:600;">⚠ Сначала дайте ответ на вопрос</span>';
     } else {
-        alert('Сначала выберите вариант ответа');
+        alert('Сначала дайте ответ на вопрос');
     }
 }
 
@@ -1258,9 +1338,14 @@ function restoreFeedback(idx, container) {
 // ===== Навигация =====
 function goToQuestion(idx) {
     if (idx < 0 || idx >= questions.length) return;
-    // В CrushMode переход только вперёд и только после верного ответа
-    // (кнопка «Назад» скрыта, «Вперёд» заменена на «Дальше →»)
-    if (crushMode && idx > currentQuestionIndex && crushState !== CRUSH_STATE.CORRECT) return;
+    if (crushMode) {
+        // В CrushMode «Назад» запрещён; вперёд — только после верного ответа.
+        // Кнопка «Дальше →» на описании открывается через q_wasCorrectHere,
+        // поэтому сюда заходим с уже сброшенным crushState — не блокируем переход
+        if (idx < currentQuestionIndex) return;
+        if (idx > currentQuestionIndex && crushState !== CRUSH_STATE.CORRECT &&
+            !q_wasCorrectHere) return;
+    }
     currentQuestionIndex = idx;
     renderQuestion();
 }
@@ -1274,9 +1359,14 @@ function q_isCrushPassed(idx) {
 // В CrushMode переход возможен только после верного ответа (кнопка скрыта до него),
 // на последнем вопросе вместо неё показывается «Завершить тест».
 function handleNext() {
-    if (crushMode && crushState !== CRUSH_STATE.CORRECT) return;
+    // В CrushMode вперёд пускаем только после верного ответа
+    // (вопрос-описание проходится без ответа)
+    if (crushMode && crushState !== CRUSH_STATE.CORRECT &&
+        !q0typeIsDescription(currentQuestionIndex)) return;
     if (currentQuestionIndex < questions.length - 1) {
-        if (crushMode) crushState = CRUSH_STATE.ANSWERING;
+        // «Дальше →» больше не нужна на следующем вопросе — сбрасываем состояние
+        // заранее, до перерисовки (renderQuestion сам ничего не сбрасывает)
+        if (crushMode) { crushState = CRUSH_STATE.ANSWERING; q_wasCorrectHere = false; }
         goToQuestion(currentQuestionIndex + 1);
     } else {
         finishTest();
@@ -1286,17 +1376,18 @@ function handleNext() {
 // ===== CrushMode =====
 // Единая кнопка «Проверить ответ»: верный ответ -> зелёная подсветка + открывается
 // «Дальше →»; неверный -> красная подсветка выбранного варианта, можно выбрать другой
-// ответ и проверить снова. Три ошибки за сессию -> возврат к началу теста.
-// Вопросы идут в порядке расположения в тесте, варианты ответов перемешаны,
-// возврат к предыдущим вопросам невозможен (только «назад» нельзя).
+// ответ (или исправить ввод) и проверить снова. Три ошибки за сессию -> возврат к началу
+// теста. Работает со всеми типами вопросов (multichoice, truefalse, shortanswer,
+// numerical, cloze). Вопросы идут в порядке расположения в тесте, варианты ответов
+// перемешаны, возврат к предыдущим вопросам невозможен (только вперёд).
 function handleCrushCheck() {
     // После 3 ошибок проверка блокируется до перезапуска сессии
     if (crushState === CRUSH_STATE.RESTART) return;
     // Ответ уже верный — повторная проверка не нужна
     if (crushState === CRUSH_STATE.CORRECT) return;
 
-    if (userAnswers[currentQuestionIndex] === null || userAnswers[currentQuestionIndex] === undefined) {
-        alert('Сначала выберите вариант ответа');
+    if (!hasAnswer(currentQuestionIndex)) {
+        alert('Сначала дайте ответ на вопрос');
         return;
     }
 
@@ -1307,7 +1398,7 @@ function handleCrushCheck() {
         crushState = CRUSH_STATE.CORRECT;
         updateNavigation();
     } else {
-        // Неверно: вариант подсвечен красным, доступ к выбору другого ответа открыт
+        // Неверно: ответ подсвечен красным, доступ к выбору другого ответа открыт
         crushErrors++;
         updateCrushAttemptsPill();
 
@@ -1318,7 +1409,7 @@ function handleCrushCheck() {
             restartCrushSession();
         } else {
             // Правильный ответ не раскрываем — только сообщение об ошибке
-            alert(`Неверно! Выберите другой вариант и проверьте снова. Осталось попыток: ${CRUSH_MAX_ERRORS - crushErrors}`);
+            alert(`Неверно! Дайте другой ответ и проверьте снова. Осталось попыток: ${CRUSH_MAX_ERRORS - crushErrors}`);
         }
     }
 }
@@ -1329,6 +1420,8 @@ function restartCrushSession() {
     crushErrors = 0;
     crushState = CRUSH_STATE.ANSWERING;
     userAnswers = new Array(questions.length).fill(null);
+    userTextAnswers = new Array(questions.length).fill('');
+    userClozeAnswers = new Array(questions.length).fill(null);
     checkedQuestions = new Array(questions.length).fill(false);
     feedbackStore = new Array(questions.length).fill(null);
     questions.forEach(q => { q.isCorrect = false; q._checked = false; });
@@ -1383,7 +1476,8 @@ function renderResultsSummary(endDateTimeStr, grade) {
 
 // ===== Завершение теста =====
 function finishTest() {
-    const unanswered = userAnswers.filter(a => a === null).length;
+    // неотвеченные — без ответа любого типа (описание всегда «отвечено»)
+    const unanswered = questions.filter((q, i) => !hasAnswer(i)).length;
     if (unanswered > 0 && !crushMode) {
         if (!confirm(`У вас ${unanswered} неотвеченных вопрос(ов). Завершить тест?`)) return;
     }
@@ -1391,12 +1485,12 @@ function finishTest() {
     // Остановка таймера
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
 
-    // Подсчёт результатов
-    const total = questions.length;
-    const correct = questions.filter((q, i) => {
-        if (userAnswers[i] === null) return false;
-        return q.answers[userAnswers[i]].isCorrect;
-    }).length;
+    // Подсчёт результатов: вердикт по каждому вопросу через единый оценщик
+    // (учитывает множественный выбор, текст с эталонами, число с допуском, cloze;
+    // вопросы-описания не влияют на оценку — исключены из знаменателя)
+    const gradable = questions.filter(q => q.type !== 'description');
+    const total = gradable.length;
+    const correct = gradable.filter(q => evaluateQuestion(q, questions.indexOf(q)).correct).length;
     const pct = total > 0 ? Math.round(correct / total * 100) : 0;
     const grade = pct >= 85 ? 5 : pct >= 70 ? 4 : pct >= 50 ? 3 : 2;
 
@@ -1444,10 +1538,11 @@ function renderDetailedResults() {
     note.textContent = 'Показаны только вопросы, на которые был дан правильный ответ';
     detailedResults.appendChild(note);
 
-    // Индексы вопросов, на которые получен правильный ответ
+    // Индексы вопросов, на которые получен правильный ответ (единый оценщик —
+    // корректно для всех типов: выбор, текст, число с допуском, cloze)
     const correctIndexes = questions
         .map((q, i) => i)
-        .filter(i => userAnswers[i] !== null && questions[i].answers[userAnswers[i]].isCorrect);
+        .filter(i => evaluateQuestion(questions[i], i).correct);
 
     if (correctIndexes.length === 0) {
         const empty = document.createElement('div');
@@ -1477,9 +1572,20 @@ function renderDetailedResults() {
         al.className = 'answer-label';
         al.textContent = 'Ответ:';
         answerLine.appendChild(al);
-        q.answers.filter(a => a.isCorrect).forEach(a => {
-            answerLine.appendChild(renderTextWithMath(a.text));
-        });
+        if (q.type === 'cloze') {
+            // значения пропусков из эталонных ответов
+            q.clozeBlanks.forEach(b => {
+                const a = b.answers.find(x => x.correct) || b.answers[0];
+                if (a) answerLine.appendChild(renderTextWithMath(a.text));
+            });
+        } else if (q.type === 'shortanswer' || q.type === 'numerical') {
+            // показываем то, что ввёл студент (совпало с эталоном)
+            answerLine.appendChild(renderTextWithMath(userTextAnswers[i] || ''));
+        } else {
+            q.answers.filter(a => a.isCorrect).forEach(a => {
+                answerLine.appendChild(renderTextWithMath(a.text));
+            });
+        }
         item.appendChild(answerLine);
 
         detailedResults.appendChild(item);
