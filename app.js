@@ -53,9 +53,10 @@ const DEMO_QUIZ_XML = `<?xml version="1.0" encoding="UTF-8"?>
 // =============================================================
 // Состояние приложения
 // =============================================================
-let questions = [];           // распарсенные вопросы [{name, text, answers:[{text,isCorrect}], isCorrect, _checked}]
+let questions = [];           // распарсенные вопросы [{name, text, type, single, answers, clozeBlanks, isCorrect, _checked}]
 let currentQuestionIndex = 0;
-let userAnswers = [];         // индекс выбранного варианта для каждого вопроса (null — нет ответа)
+let userAnswers = [];         // индекс(ы) выбранного варианта (null — нет ответа; массив — множественный выбор)
+let userTextAnswers = [];     // введённый текст для shortanswer / numerical / cloze
 let startTime = null;         // момент старта теста (Date.now())
 let timerInterval = null;
 let timeSpent = 0;            // секунды с момента старта теста
@@ -489,8 +490,8 @@ function parseMoodleXML(xmlContent) {
     const questionNodes = xmlDoc.getElementsByTagName('question');
 
     for (let node of questionNodes) {
-        const type = node.getAttribute('type');
-        if (type !== 'multichoice') continue;
+        const type = node.getAttribute('type') || 'multichoice';
+        if (type === 'category') continue;   // служебный контейнер Moodle
 
         // Название вопроса из тега <name> (для режима HeaderShow)
         let questionName = '';
@@ -507,8 +508,59 @@ function parseMoodleXML(xmlContent) {
             const textNodes = questionTextNodes[0].getElementsByTagName('text');
             if (textNodes.length > 0) questionText = textNodes[0].textContent.trim();
         }
+
+        // Description — вопрос-описание без ответа: текст из <description>,
+        // выводится как обычный текст, проверке не подлежит
+        if (type === 'description') {
+            const dNodes = node.getElementsByTagName('description');
+            if (dNodes.length > 0) {
+                const dt = dNodes[0].getElementsByTagName('text');
+                if (dt.length > 0 && dt[0].textContent.trim()) questionText = dt[0].textContent.trim();
+            }
+            if (!questionText) continue;
+            questions.push({
+                name: questionName, text: processHtmlContent(questionText),
+                type: 'description', single: true, answers: [], clozeBlanks: null,
+                isCorrect: false, _checked: false,
+            });
+            continue;
+        }
+
         if (!questionText) continue;
         questionText = processHtmlContent(questionText);
+
+        // ---- Cloze: пропуски {...:Тип:ответ%вес%альт~неверный...} внутри текста ----
+        if (type === 'cloze') {
+            const blanks = parseClozeBlanks(questionText);
+            if (!blanks.length) continue;
+            questions.push({
+                name: questionName, text: questionText,
+                type: 'cloze', single: true, answers: [], clozeBlanks: blanks,
+                isCorrect: false, _checked: false,
+            });
+            continue;
+        }
+
+        // ---- True/False: фиксированные варианты «Верно» / «Неверно» ----
+        if (type === 'truefalse') {
+            const answers = [{ text: 'Верно', isCorrect: false }, { text: 'Неверно', isCorrect: false }];
+            const answerNodes = node.getElementsByTagName('answer');
+            for (let answerNode of answerNodes) {
+                const t = (answerNode.getElementsByTagName('text')[0]?.textContent || '').trim().toLowerCase();
+                const idx = (t === 'true' || t === 'верно' || t === 'да' || t === 'истина') ? 0 : 1;
+                answers[idx].isCorrect = parseFloat(answerNode.getAttribute('fraction') || 0) > 0;
+            }
+            questions.push({
+                name: questionName, text: questionText,
+                type: 'truefalse', single: true, answers, clozeBlanks: null,
+                isCorrect: false, _checked: false,
+            });
+            continue;
+        }
+
+        // ---- Одиночный / множественный выбор (single=true/false) ----
+        const singleEl = node.getElementsByTagName('single')[0];
+        const single = !singleEl || (singleEl.textContent || 'true').trim() !== 'false';
 
         // Варианты ответа
         const answers = [];
@@ -520,13 +572,94 @@ function parseMoodleXML(xmlContent) {
             if (!answerText) continue;
             answerText = processHtmlContent(answerText);
             const fraction = parseFloat(answerNode.getAttribute('fraction') || 0);
-            answers.push({ text: answerText, isCorrect: fraction > 0 });
+            const ans = { text: answerText, isCorrect: fraction > 0 };
+            // Shortanswer / numerical: допуск и эталонные ответы
+            const tolEl = answerNode.getElementsByTagName('tolerance')[0];
+            if (tolEl) ans.tolerance = parseFloat(tolEl.textContent) || 0;
+            answers.push(ans);
         }
 
         if (answers.length === 0) continue;
-        questions.push({ name: questionName, text: questionText, answers, isCorrect: false, _checked: false });
+
+        // shortanswer / numerical: все непустые варианты — правильные ответы
+        // (эталонные формулировки; проверяются вводом с клавиатуры)
+        let qType = type;
+        if (type === 'shortanswer' || type === 'numerical') {
+            answers.forEach(a => { a.isCorrect = true; });
+        } else if (type !== 'multichoice') {
+            // неизвестный тип с вариантами трактуем как multichoice
+            qType = 'multichoice';
+        }
+
+        questions.push({
+            name: questionName, text: questionText,
+            type: qType, single, answers, clozeBlanks: null,
+            isCorrect: false, _checked: false,
+        });
     }
     console.log(`Найдено ${questions.length} вопросов` + (testTopicName ? `, тема: ${testTopicName}` : ''));
+}
+
+// ===== Cloze: разбор пропусков {...:Тип:содержимое} =====
+// MCMS      — выпадающий список: "верный%100%alt~неверный%0"
+// T/F/MW    — текстовый пропуск: "ответ|альтернатива:фидбек"
+// NUMERICAL — числовой пропуск:  "число&допуск|число2:фидбек"
+const CLOZE_BLANK_RE = /\{\.\.\.:([^{}]+)\}/g;
+const CLOZE_TYPES = ['MCMS', 'T', 'F', 'MW', 'NUMERICAL'];
+
+function parseClozeBlanks(text) {
+    const blanks = [];
+    let m;
+    CLOZE_BLANK_RE.lastIndex = 0;
+    while ((m = CLOZE_BLANK_RE.exec(text)) !== null) {
+        const segs = m[1].split(':');
+        let type = (segs[0] || '').trim().toUpperCase();
+        if (!CLOZE_TYPES.includes(type)) type = 'MCMS';
+        const rest = segs.slice(1).join(':');
+        let answerPart = rest, feedback = '';
+        const fc = answerPart.lastIndexOf(':');
+        if (fc >= 0) { feedback = answerPart.slice(fc + 1); answerPart = answerPart.slice(0, fc); }
+
+        const answers = [];
+        if (type === 'MCMS') {
+            answerPart.split('~').forEach((group, gi) => {
+                group.split('|').forEach(chunk => {
+                    const mm = chunk.match(/^(.*?)%(\d+)%(.*)$/s);
+                    const t = mm ? mm[1].trim() : chunk.trim();
+                    if (t) answers.push({ text: t, correct: gi === 0 });
+                });
+            });
+        } else if (type === 'NUMERICAL') {
+            answerPart.split('|').forEach(a => {
+                const amp = a.indexOf('&');
+                const t = (amp >= 0 ? a.slice(0, amp) : a).trim();
+                if (t) answers.push({ text: t, tolerance: amp >= 0 ? (parseFloat(a.slice(amp + 1)) || 0) : 0, correct: true });
+            });
+        } else {
+            answerPart.split('|').forEach(a => {
+                const t = a.trim();
+                if (t) answers.push({ text: t, correct: true });
+            });
+        }
+        if (answers.some(a => a.correct)) blanks.push({ type, answers, feedback });
+    }
+    return blanks;
+}
+
+// Проверка строкового ответа: совпадение с одним из эталонов (без учёта регистра,
+// лишних пробелов и ё/е), для NUMERICAL — число с допуском
+function matchShortAnswer(userStr, candidates) {
+    const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/ё/g, 'е');
+    const u = norm(userStr);
+    if (!u) return false;
+    return candidates.some(c => {
+        if (c.tolerance !== undefined && c.tolerance !== null) {
+            const uv = parseFloat(String(userStr).replace(',', '.'));
+            const cv = parseFloat(String(c.text).replace(',', '.'));
+            return Number.isFinite(uv) && Number.isFinite(cv) && Math.abs(uv - cv) <= (c.tolerance || 0);
+        }
+        return norm(c.text) === u;
+    });
 }
 
 // Обработка HTML-содержимого из CDATA:
@@ -579,13 +712,90 @@ function shuffleQuestions() {
 
 // ===== Перемешивание вариантов ответов =====
 // Выполняется во всех режимах — варианты всегда выводятся случайным образом
+// (фиксированные пары truefalse не перемешиваем, чтобы «Верно» всегда шло первым;
+//  пропуски cloze идут в порядке текста вопроса)
 function shuffleAnswers() {
     questions.forEach(q => {
+        if (q.type === 'truefalse' || q.type === 'cloze') return;
         for (let i = q.answers.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [q.answers[i], q.answers[j]] = [q.answers[j], q.answers[i]];
         }
     });
+}
+
+// Есть ли у студента ответ на данный вопрос (для любого типа)
+function hasAnswer(idx) {
+    const q = questions[idx];
+    if (!q) return false;
+    switch (q.type) {
+        case 'shortanswer':
+        case 'numerical':
+            return !!(userTextAnswers[idx] && userTextAnswers[idx].trim());
+        case 'cloze':
+            return !!q.clozeBlanks &&
+                q.clozeBlanks.every((b, bi) => getClozeInputValue(bi) !== null);
+        case 'multichoice':
+            if (!q.single) return Array.isArray(userAnswers[idx]) && userAnswers[idx].length > 0;
+            return userAnswers[idx] !== null && userAnswers[idx] !== undefined;
+        default: // truefalse / description
+            return userAnswers[idx] !== null && userAnswers[idx] !== undefined;
+    }
+}
+
+// Аккуратное чтение значения поля ввода cloze (если оно ещё в DOM)
+function getClozeInputValue(bi) {
+    const el = questionsContainer.querySelector(`[data-cloze-blank="${bi}"]`);
+    if (!el) return null;
+    if (el.tagName === 'SELECT') return el.selectedIndex > 0 ? el.value : null;
+    return el.value.trim() ? el.value : null;
+}
+
+// Текущее значение множественного выбора (массив индексов) из DOM
+function getDomMultiSelection() {
+    const boxes = questionsContainer.querySelectorAll('.answer-option input[type="checkbox"]:checked');
+    return Array.from(boxes).map(b => +b.dataset.index);
+}
+
+// ===== Оценка ответа на вопрос (без сайд-эффектов для подсветки) =====
+function evaluateQuestion(q, idx) {
+    switch (q.type) {
+        case 'description':
+            return { answered: true, correct: true, skipped: true };
+        case 'shortanswer':
+        case 'numerical': {
+            const t = (userTextAnswers[idx] || '').trim();
+            if (!t) return { answered: false, correct: false };
+            return { answered: true, correct: matchShortAnswer(t, q.answers) };
+        }
+        case 'cloze': {
+            const vals = [];
+            let allFilled = true, allCorrect = true;
+            q.clozeBlanks.forEach((b, bi) => {
+                const v = getClozeInputValue(bi);
+                vals.push(v);
+                if (v === null) { allFilled = false; return; }
+                const ok = b.type === 'MCMS'
+                    ? b.answers.some(a => a.correct && a.text === v)
+                    : matchShortAnswer(v, b.answers);
+                if (!ok) allCorrect = false;
+            });
+            return { answered: allFilled, correct: allFilled && allCorrect, clozeValues: vals };
+        }
+        default: { // multichoice / truefalse
+            const sel = userAnswers[idx];
+            if (!q.single && Array.isArray(sel)) {
+                if (!sel.length) return { answered: false, correct: false };
+                const correctSet = q.answers.map((a, i) => a.isCorrect ? i : -1).filter(i => i >= 0).sort();
+                const selSorted = [...sel].sort((a, b) => a - b);
+                const eq = correctSet.length === selSorted.length &&
+                    correctSet.every((v, k) => v === selSorted[k]);
+                return { answered: true, correct: eq };
+            }
+            if (sel === null || sel === undefined) return { answered: false, correct: false };
+            return { answered: true, correct: !!q.answers[sel].isCorrect };
+        }
+    }
 }
 
 // ===== Запуск теста =====
@@ -595,9 +805,13 @@ function startTest() {
     // Сброс состояния
     currentQuestionIndex = 0;
     userAnswers = new Array(questions.length).fill(null);
+    userTextAnswers = new Array(questions.length).fill('');
     checkedQuestions = new Array(questions.length).fill(false);
     feedbackStore = new Array(questions.length).fill(null);
-    questions.forEach(q => { q.isCorrect = false; q._checked = false; });
+    questions.forEach(q => {
+        q.isCorrect = false; q._checked = false;
+        if (q.type === 'multichoice' && !q.single) q.answers.forEach(a => { a.selected = false; });
+    });
     crushErrors = 0;
     crushState = 'answering';
     timeSpent = 0;
@@ -643,11 +857,12 @@ function startTest() {
 //   «Завершить тест»   — на последнем вопросе (в CrushMode — только после верного
 //                        ответа). Отдельной кнопки «Дальше» больше нет.
 function updateNavigation() {
-    const last = currentQuestionIndex === questions.length - 1;
+    const idx = currentQuestionIndex;
+    const last = idx === questions.length - 1;
 
     // Возврат назад: в CrushMode двигаться можно только вперёд (после верного ответа)
     prevBtn.classList.toggle('hidden', crushMode);
-    prevBtn.disabled = currentQuestionIndex === 0;
+    prevBtn.disabled = idx === 0;
 
     // Единая кнопка проверки (CheckMode и/или CrushMode)
     checkAnswerBtn.classList.toggle('hidden', !(checkMode || crushMode));
@@ -657,7 +872,7 @@ function updateNavigation() {
             checkAnswerBtn.disabled = crushState !== CRUSH_STATE.ANSWERING;
         } else {
             // в CheckMode после проверки вопрос зафиксирован
-            checkAnswerBtn.disabled = checkedQuestions[currentQuestionIndex] === true;
+            checkAnswerBtn.disabled = checkedQuestions[idx] === true;
         }
     }
 
@@ -671,6 +886,10 @@ function updateNavigation() {
         nextBtn.textContent = 'Вперёд →';
         nextBtn.classList.toggle('hidden', last);
         finishBtn.classList.toggle('hidden', !last);
+        // Описание без ответа — сразу доступно движение вперёд
+        if (questions[idx] && questions[idx].type === 'description') {
+            checkAnswerBtn.classList.add('hidden');
+        }
     }
 }
 
@@ -681,7 +900,8 @@ function updateCrushAttemptsPill() {
 
 // ===== Отрисовка текущего вопроса =====
 function renderQuestion() {
-    const q = questions[currentQuestionIndex];
+    const idx = currentQuestionIndex;
+    const q = questions[idx];
     questionsContainer.innerHTML = '';
 
     const card = document.createElement('div');
@@ -695,70 +915,208 @@ function renderQuestion() {
         card.appendChild(headerEl);
     }
 
-    // Текст вопроса (HTML + LaTeX)
+    // Описание без ответа — просто выводим текст, навигация открыта
+    if (q.type === 'description') {
+        const textEl = document.createElement('div');
+        textEl.className = 'question-text';
+        textEl.appendChild(renderTextWithMath(q.text));
+        card.appendChild(textEl);
+        questionsContainer.appendChild(card);
+        updateCounters();
+        applyMathJax();
+        return;
+    }
+
+    // Текст вопроса (HTML + LaTeX). Для cloze заменяется на интерактивный вариант
     const textEl = document.createElement('div');
     textEl.className = 'question-text';
-    textEl.appendChild(renderTextWithMath(q.text));
+    if (q.type === 'cloze') buildClozeQuestionHtml(q, textEl);
+    else textEl.appendChild(renderTextWithMath(q.text));
     card.appendChild(textEl);
 
-    // Варианты ответа
-    const locked = (checkMode && !crushMode && checkedQuestions[currentQuestionIndex]) ||
+    const locked = (checkMode && !crushMode && checkedQuestions[idx]) ||
                    (crushMode && crushState !== CRUSH_STATE.ANSWERING);
-    q.answers.forEach((answer, i) => {
-        const option = document.createElement('div');
-        option.className = 'answer-option';
-        option.dataset.index = i;
 
-        const letter = document.createElement('div');
-        letter.className = 'answer-letter';
-        letter.textContent = LETTERS[i] || (i + 1);
+    // Поле ввода для shortanswer / numerical
+    if (q.type === 'shortanswer' || q.type === 'numerical') {
+        card.appendChild(buildTextInputAnswer(q, idx, locked));
+    }
 
-        const content = renderTextWithMath(answer.text);
+    // Варианты ответа (multichoice / truefalse)
+    if (q.answers.length > 0) {
+        const multi = q.type === 'multichoice' && !q.single;
+        q.answers.forEach((answer, i) => {
+            const option = document.createElement('div');
+            option.className = 'answer-option';
+            option.dataset.index = i;
 
-        option.appendChild(letter);
-        option.appendChild(content);
-
-        // Восстановление выбранного/проверенного состояния
-        if (userAnswers[currentQuestionIndex] === i) option.classList.add('selected');
-        if (isChecked(currentQuestionIndex)) {
-            const sel = userAnswers[currentQuestionIndex];
-            if (crushMode) {
-                // CrushMode: правильный ответ не раскрываем.
-                // Зелёным — только найденный пользователем верный вариант,
-                // красным — его же неверный выбор
-                if (q.isCorrect && answer.isCorrect) option.classList.add('correct');
-                else if (!q.isCorrect && i === sel) option.classList.add('incorrect');
+            const letter = document.createElement('div');
+            letter.className = 'answer-letter';
+            if (multi) {
+                const box = document.createElement('input');
+                box.type = 'checkbox';
+                box.dataset.index = i;
+                box.checked = Array.isArray(userAnswers[idx]) && userAnswers[idx].includes(i);
+                box.disabled = locked;
+                letter.appendChild(box);
             } else {
-                // CheckMode / обычный режим: выбранный вариант — зелёный (верно)
-                // или красный (ошибка фиксируется), правильный подсвечивается зелёным
-                if (i === sel) option.classList.add(q.answers[i].isCorrect ? 'correct' : 'incorrect');
-                if (answer.isCorrect) option.classList.add('correct');
+                letter.textContent = LETTERS[i] || (i + 1);
             }
-        }
 
-        if (locked) option.classList.add('locked');
-        option.addEventListener('click', () => selectAnswer(i));
-        card.appendChild(option);
-    });
+            const content = renderTextWithMath(answer.text);
+            option.appendChild(letter);
+            option.appendChild(content);
+
+            // Восстановление выбранного/проверенного состояния
+            if (!multi && userAnswers[idx] === i) option.classList.add('selected');
+            if (multi && boxChecked(option)) option.classList.add('selected');
+            if (isChecked(idx)) {
+                if (crushMode) {
+                    // CrushMode: правильный ответ не раскрываем.
+                    // Зелёным — только найденный пользователем верный вариант,
+                    // красным — его же неверный выбор
+                    if (q.isCorrect && answer.isCorrect) option.classList.add('correct');
+                    else if (!q.isCorrect && !multi && i === userAnswers[idx]) option.classList.add('incorrect');
+                } else {
+                    // CheckMode / обычный режим: выбранный вариант — зелёный (верно)
+                    // или красный (ошибка фиксируется), правильный подсвечивается зелёным
+                    const chosen = multi ? boxChecked(option) : userAnswers[idx] === i;
+                    if (chosen) option.classList.add(answer.isCorrect ? 'correct' : 'incorrect');
+                    if (answer.isCorrect) option.classList.add('correct');
+                }
+            }
+
+            if (locked) option.classList.add('locked');
+            option.addEventListener('click', () => selectAnswer(i));
+            card.appendChild(option);
+        });
+    }
 
     // Фидбек по проверенному вопросу (CheckMode) — выводится под вариантами.
     // Кнопка «Проверить ответ» находится внизу панели (единая, без дублей).
-    if (checkMode && !crushMode && isChecked(currentQuestionIndex)) {
+    if (checkMode && !crushMode && isChecked(idx)) {
         const feedback = document.createElement('div');
         feedback.className = 'check-feedback';
-        restoreFeedback(currentQuestionIndex, feedback);
+        restoreFeedback(idx, feedback);
         card.appendChild(feedback);
     }
 
     questionsContainer.appendChild(card);
 
     // Обновление счётчиков и навигации
+    updateCounters();
+
+    applyMathJax();
+}
+
+// Чекбокс варианта множественного выбора отмечен?
+function boxChecked(optionEl) {
+    const b = optionEl.querySelector('input[type="checkbox"]');
+    return !!(b && b.checked);
+}
+
+// Поле ручного ввода ответа (shortanswer / numerical)
+function buildTextInputAnswer(q, idx, locked) {
+    const wrap = document.createElement('div');
+    wrap.className = 'text-answer-wrap';
+    const input = document.createElement('input');
+    input.type = q.type === 'numerical' ? 'number' : 'text';
+    input.step = 'any';
+    input.className = 'text-answer-input';
+    input.placeholder = q.type === 'numerical' ? 'Введите число' : 'Введите ответ';
+    input.value = userTextAnswers[idx] || '';
+    input.disabled = locked;
+    if (isChecked(idx)) {
+        input.classList.add(q.isCorrect ? 'correct' : 'incorrect');
+    }
+    input.addEventListener('input', () => {
+        userTextAnswers[idx] = input.value;
+        if (crushMode && crushState === CRUSH_STATE.CORRECT) {
+            crushState = CRUSH_STATE.ANSWERING;   // при правке ответ нужно проверить заново
+        }
+        updateNavigation();
+    });
+    wrap.appendChild(input);
+    if (q.type === 'shortanswer') {
+        const hint = document.createElement('div');
+        hint.className = 'text-answer-hint';
+        hint.textContent = 'Допускаются варианты написания, указанные в эталонных ответах';
+        wrap.appendChild(hint);
+    }
+    return wrap;
+}
+
+// Сборка HTML текста cloze-вопроса с интерактивными пропусками
+function buildClozeQuestionHtml(q, container) {
+    const parts = String(q.text || '').split(/(\{\.\.\.[^{}]*\})/g);
+    let bi = 0;
+    parts.forEach(part => {
+        const m = part.match(/^\{\.\.\.:([^{}]+)\}$/);
+        if (!m) {
+            if (part) container.appendChild(renderTextWithMath(part));
+            return;
+        }
+        const blank = q.clozeBlanks[bi];
+        const span = document.createElement('span');
+        span.className = 'cloze-blank';
+        span.dataset.bi = bi;
+        if (blank) {
+            const checked = isChecked(currentQuestionIndex);
+            if (blank.type === 'MCMS') {
+                const sel = document.createElement('select');
+                sel.dataset.clozeBlank = bi;
+                sel.disabled = checked && !crushMode ? true : false;
+                const ph = document.createElement('option');
+                ph.value = ''; ph.textContent = '—';
+                sel.appendChild(ph);
+                blank.answers.forEach(a => {
+                    const o = document.createElement('option');
+                    o.value = a.text; o.textContent = a.text;
+                    sel.appendChild(o);
+                });
+                if (userClozeAnswers[currentQuestionIndex]?.[bi] != null) {
+                    sel.value = userClozeAnswers[currentQuestionIndex][bi];
+                }
+                if (checked) {
+                    const okHere = blank.answers.some(a => a.correct && a.text === sel.value);
+                    sel.classList.add(okHere ? 'correct' : 'incorrect');
+                }
+                sel.addEventListener('change', () => saveClozeValue(sel, bi));
+                span.appendChild(sel);
+            } else {
+                const inp = document.createElement('input');
+                inp.type = blank.type === 'NUMERICAL' ? 'number' : 'text';
+                inp.step = 'any';
+                inp.dataset.clozeBlank = bi;
+                inp.placeholder = blank.type === 'NUMERICAL' ? 'число' : 'ответ';
+                inp.disabled = checked && !crushMode ? true : false;
+                if (userClozeAnswers[currentQuestionIndex]?.[bi] != null) inp.value = userClozeAnswers[currentQuestionIndex][bi];
+                if (checked) {
+                    const okHere = matchShortAnswer(inp.value, blank.answers);
+                    inp.classList.add(okHere ? 'correct' : 'incorrect');
+                }
+                inp.addEventListener('input', () => saveClozeValue(inp, bi));
+                span.appendChild(inp);
+            }
+        }
+        container.appendChild(span);
+        bi++;
+    });
+}
+
+// Сохранение значения пропуска в модель и активация кнопки проверки
+function saveClozeValue(el, bi) {
+    const arr = userClozeAnswers[currentQuestionIndex] || (userClozeAnswers[currentQuestionIndex] = {});
+    arr[bi] = el.tagName === 'SELECT' ? (el.value || null) : (el.value.trim() || null);
+    if (crushMode && crushState === CRUSH_STATE.CORRECT) crushState = CRUSH_STATE.ANSWERING;
+    updateNavigation();
+}
+
+function updateCounters() {
     currentQuestionElement.textContent = currentQuestionIndex + 1;
     progressFill.style.width = ((currentQuestionIndex + 1) / questions.length * 100) + '%';
     prevBtn.disabled = currentQuestionIndex === 0;
     updateNavigation();
-
-    applyMathJax();
 }
 
 function isChecked(idx) {
