@@ -150,6 +150,14 @@ function friendlyError(error) {
     return error;
 }
 
+// Перемешивание массива на месте (Фишер—Йетс) — используется для вопросов и вариантов
+function shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+}
+
 function isValidUrl(string) {
     try { new URL(string); return true; } catch (_) { return false; }
 }
@@ -221,7 +229,7 @@ function confirmName() {
     }
     studentName = getFullName();
     try {
-        localStorage.setItem('quizStudent', JSON.stringify({
+        localStorage.setItem(STORAGE_KEY_STUDENT, JSON.stringify({
             l, f, m: middleNameInput.value.trim()
         }));
     } catch (e) { console.warn('localStorage недоступен', e); }
@@ -239,7 +247,7 @@ function confirmName() {
 
 function openNameOverlay() {
     try {
-        const saved = JSON.parse(localStorage.getItem('quizStudent') || 'null');
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY_STUDENT) || 'null');
         if (saved) {
             lastNameInput.value = saved.l || '';
             firstNameInput.value = saved.f || '';
@@ -326,43 +334,24 @@ async function autoLoadTest(url) {
 
 // ===== Демо-тест =====
 window.loadExampleTest = function () {
-    const exampleXML = `<?xml version="1.0" encoding="UTF-8"?>
-<quiz>
-    <topicName>Демо: формулы и таблицы</topicName>
-    <question type="multichoice">
-<name><text>Пример с формулой 1</text></name>
-<questiontext format="html">
-    <text><![CDATA[<p>Выберите правильную формулу для расчёта коэффициента:</p><p>\\(\\alpha_{\\text{н}} = \\frac{\\text{АД}_{\\text{сэ}}}{\\text{АД}_{\\text{с}}}\\)</p>]]></text>
-</questiontext>
-<answer fraction="100"><text><![CDATA[\\(\\alpha_{\\text{н}} = \\frac{\\text{АД}_{\\text{сэ}}}{\\text{АД}_{\\text{с}}}\\)]]></text></answer>
-<answer fraction="0"><text><![CDATA[\\(\\alpha_{\\text{н}} = \\frac{\\text{АД}_{\\text{с}}}{\\text{АД}_{\\text{сэ}}}\\)]]></text></answer>
-<answer fraction="0"><text><![CDATA[\\(\\alpha_{\\text{н}} = \\text{АД}_{\\text{сэ}} + \\text{АД}_{\\text{с}}\\)]]></text></answer>
-    </question>
-    <question type="multichoice">
-<name><text>Пример с формулой 2</text></name>
-<questiontext format="html">
-    <text><![CDATA[<p>Чему равно значение \\(E = mc^2\\) при m = 2, c = 3?</p>]]></text>
-</questiontext>
-<answer fraction="0"><text>6</text></answer>
-<answer fraction="100"><text>18</text></answer>
-<answer fraction="0"><text>12</text></answer>
-    </question>
-    <question type="multichoice">
-<name><text>Пример с таблицей</text></name>
-<questiontext format="html">
-    <text><![CDATA[<table border="1"><tr><th>Ячейка</th><th>Показатель</th><th>Обозначение</th><th>Значение</th><th>Единицы измерения</th></tr><tr><td>A1</td><td>?</td><td>Q</td><td>—</td><td>—</td></tr></table><p>Какой показатель должен находиться в ячейке A1?</p>]]></text>
-</questiontext>
-<answer fraction="100"><text><![CDATA[<p>Объёмный расход</p>]]></text></answer>
-<answer fraction="0"><text><![CDATA[<p>Давление</p>]]></text></answer>
-<answer fraction="0"><text><![CDATA[<p>Температура</p>]]></text></answer>
-    </question>
-</quiz>`;
-    parseMoodleXML(exampleXML);
+    parseMoodleXML(DEMO_QUIZ_XML);
     if (questions.length > 0) {
-        showUploadStatus(`Загружен демо-тест с ${questions.length} вопросами`, 'success');
-        setTimeout(() => { uploadStatus.classList.add('hidden'); startTest(); }, 1200);
+        beginLoadedTest(`Загружен демо-тест с ${questions.length} вопросами`);
     }
 };
+
+// Кнопки секции загрузки: блокировка на время загрузки XML-файла
+const UPLOAD_BUTTONS = [loadUrlBtn, qrCodeBtn, yandexBtn, demoBtn];
+function setUploadButtonsBusy(busy) {
+    UPLOAD_BUTTONS.forEach(btn => { btn.disabled = busy; });
+    loadUrlBtn.textContent = busy ? 'Загрузка...' : '🔗 Загрузить';
+}
+
+// Успешная загрузка теста: сообщение и автозапуск через короткую паузу
+function beginLoadedTest(message) {
+    showUploadStatus(message, 'success');
+    setTimeout(() => { uploadStatus.classList.add('hidden'); startTest(); }, 1200);
+}
 
 // ===== Ручная загрузка по URL =====
 async function handleUrlLoad() {
@@ -374,26 +363,17 @@ async function handleUrlLoad() {
     }
     try {
         showUploadStatus('Загрузка теста...', 'loading');
-        loadUrlBtn.disabled = true;
-        qrCodeBtn.disabled = true;
-        yandexBtn.disabled = true;
-        demoBtn.disabled = true;
-        loadUrlBtn.textContent = 'Загрузка...';
+        setUploadButtonsBusy(true);
 
         await fetchAndParseTest(url);
 
-        showUploadStatus(`Успешно загружен тест с ${questions.length} вопросами`, 'success');
-        setTimeout(() => { uploadStatus.classList.add('hidden'); startTest(); }, 1200);
+        beginLoadedTest(`Успешно загружен тест с ${questions.length} вопросами`);
     } catch (error) {
         const err = friendlyError(error);
         console.error('Ошибка загрузки теста:', err);
         showUploadStatus(`Ошибка загрузки: ${err.message}`, 'error');
     } finally {
-        loadUrlBtn.disabled = false;
-        qrCodeBtn.disabled = false;
-        yandexBtn.disabled = false;
-        demoBtn.disabled = false;
-        loadUrlBtn.textContent = '🔗 Загрузить';
+        setUploadButtonsBusy(false);
     }
 }
 
@@ -701,10 +681,7 @@ function renderTextWithMath(text) {
 // Используется только в режиме RandomMode — там порядок вопросов случайный.
 // В остальных режимах вопросы идут последовательно от первого
 function shuffleQuestions() {
-    for (let i = questions.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [questions[i], questions[j]] = [questions[j], questions[i]];
-    }
+    shuffleArray(questions);
 }
 
 // ===== Перемешивание вариантов ответов =====
@@ -714,10 +691,7 @@ function shuffleQuestions() {
 function shuffleAnswers() {
     questions.forEach(q => {
         if (q.type === 'truefalse' || q.type === 'cloze') return;
-        for (let i = q.answers.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [q.answers[i], q.answers[j]] = [q.answers[j], q.answers[i]];
-        }
+        shuffleArray(q.answers);
     });
 }
 
@@ -809,7 +783,7 @@ function startTest() {
         if (q.type === 'multichoice' && !q.single) q.answers.forEach(a => { a.selected = false; });
     });
     crushErrors = 0;
-    crushState = 'answering';
+    crushState = CRUSH_STATE.ANSWERING;
     timeSpent = 0;
     startTime = Date.now();
 
@@ -890,7 +864,7 @@ function updateNavigation() {
         nextBtn.classList.toggle('hidden', last);
         finishBtn.classList.toggle('hidden', !last);
         // Описание без ответа — сразу доступно движение вперёд
-        if (questions[idx] && questions[idx].type === 'description') {
+        if (q0typeIsDescription(idx)) {
             checkAnswerBtn.classList.add('hidden');
         }
     }
@@ -1480,7 +1454,7 @@ function finishTest() {
     const total = gradable.length;
     const correct = gradable.filter(q => evaluateQuestion(q, questions.indexOf(q)).correct).length;
     const pct = total > 0 ? Math.round(correct / total * 100) : 0;
-    const grade = pct >= 85 ? 5 : pct >= 70 ? 4 : pct >= 50 ? 3 : 2;
+    const grade = GRADE_THRESHOLDS.find(t => pct >= t.min)?.grade ?? 2;
 
     // Заполнение интерфейса
     testSection.classList.add('hidden');
@@ -1495,9 +1469,9 @@ function finishTest() {
     gradePill.textContent = 'Оценка: ' + grade;
 
     // Анимация кольца
-    scoreRing.style.strokeDashoffset = 440;
+    scoreRing.style.strokeDashoffset = SCORE_RING_LENGTH;
     setTimeout(() => {
-        scoreRing.style.strokeDashoffset = 440 - (440 * pct / 100);
+        scoreRing.style.strokeDashoffset = SCORE_RING_LENGTH - (SCORE_RING_LENGTH * pct / 100);
     }, 100);
 
     // Итоговая сводка: ФИО → дата/время окончания → тема (если есть) → оценка → время

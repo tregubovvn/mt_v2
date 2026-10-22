@@ -458,25 +458,26 @@ function currentQuestion() {
 // ============================================================
 // Настройки (токены, автосохранение) — в localStorage
 // ============================================================
+const TOKEN_FIELDS = { githubToken: LS.ghToken, deepseekToken: LS.dsToken, gitverseToken: LS.gvToken };
+
 function loadSettings() {
-    document.getElementById('githubToken').value = localStorage.getItem(LS.ghToken) || '';
-    document.getElementById('deepseekToken').value = localStorage.getItem(LS.dsToken) || '';
-    document.getElementById('gitverseToken').value = localStorage.getItem(LS.gvToken) || '';
+    Object.keys(TOKEN_FIELDS).forEach(id => {
+        els[id].value = localStorage.getItem(TOKEN_FIELDS[id]) || '';
+    });
     els.autoSaveToggle.checked = localStorage.getItem(LS.autoSave) === '1';
 }
 
 function saveSettings() {
-    localStorage.setItem(LS.ghToken, document.getElementById('githubToken').value.trim());
-    localStorage.setItem(LS.dsToken, document.getElementById('deepseekToken').value.trim());
-    localStorage.setItem(LS.gvToken, document.getElementById('gitverseToken').value.trim());
+    Object.keys(TOKEN_FIELDS).forEach(id => {
+        localStorage.setItem(TOKEN_FIELDS[id], els[id].value.trim());
+    });
     localStorage.setItem(LS.autoSave, els.autoSaveToggle.checked ? '1' : '0');
 }
 
-function getGithubToken() { return document.getElementById('githubToken').value.trim(); }
-function getDeepseekToken() { return document.getElementById('deepseekToken').value.trim(); }
-function getGitverseToken() { return document.getElementById('gitverseToken').value.trim(); }
+function getGithubToken() { return els.githubToken.value.trim(); }
+function getDeepseekToken() { return els.deepseekToken.value.trim(); }
+function getGitverseToken() { return els.gitverseToken.value.trim(); }
 function autoSaveEnabled() { return els.autoSaveToggle.checked; }
-function autoSaveDelayMs() { return AUTOSAVE_DEBOUNCE_MS; }
 
 // Активный режим DeepSeek = id промпта из state.prompts
 function currentDsMode() { return localStorage.getItem(LS.dsMode) || 'formulas'; }
@@ -1345,7 +1346,7 @@ function scheduleAutoSave() {
     state.autoSaveTimeout = setTimeout(() => {
         state.autoSaveTimeout = null;
         autoSaveToDisk();
-    }, autoSaveDelayMs());
+    }, AUTOSAVE_DEBOUNCE_MS);
 }
 
 // Подсветка кнопки «Сохранить в файл» + статусное предложение сохранить
