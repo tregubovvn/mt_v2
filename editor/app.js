@@ -325,35 +325,12 @@ function bindEvents() {
 }
 
 // Делегирование событий для динамически создаваемых вариантов ответов
-// Поиск пропуска в модели cloze по индексу сегмента
-function clozeBlankAt(q, seg) {
-    const s = (q.clozeSegments || [])[+seg];
-    return s && s.blank ? s : null;
-}
 
 document.addEventListener('input', (e) => {
     const t = e.target;
     const action = t.dataset && t.dataset.action;
     if (!action) return;
     const q = currentQuestion();
-    // Cloze: правки ответов пропусков пересобирают текст вопроса из сегментов
-    if (action.startsWith('cloze-')) {
-        const s = clozeBlankAt(q, t.dataset.seg);
-        if (!s) return;
-        const j = +t.dataset.a;
-        if (action === 'cloze-answer') {
-            if (s.blank.answers[j]) s.blank.answers[j].text = t.value;
-        } else if (action === 'cloze-feedback') {
-            s.blank.feedback = t.value;
-        } else if (action === 'cloze-tolerance') {
-            let v = parseFloat(t.value); if (!Number.isFinite(v)) v = 0;
-            if (s.blank.answers[j]) s.blank.answers[j].tolerance = v;
-        } else return;
-        q.text = buildClozeText(q.clozeSegments);
-        updateXmlOutput({ force: true });
-        schedulePreview();
-        return;
-    }
     const j = +t.dataset.a;
     const answers = q.answers;
     if (action === 'update-answer') {
@@ -361,27 +338,21 @@ document.addEventListener('input', (e) => {
     } else if (action === 'update-tolerance') {
         answers[j].tolerance = parseFloat(t.value);
         if (!Number.isFinite(answers[j].tolerance)) answers[j].tolerance = 0;
+    } else if (action === 'update-fraction') {
+        // Явная доля балла (fraction) ответа: 100 — верный, 0 — неверный,
+        // промежуточное значение — частичный балл
+        let v = parseFloat(t.value);
+        if (!Number.isFinite(v)) v = 0;
+        v = Math.max(0, Math.min(100, v));
+        answers[j].rawFraction = v;
+        answers[j].correct = isCorrectFraction(v);
+        updatePublishReadiness();
+        if (!els.reviewPanel.classList.contains('hidden')) renderReviewPanel();
     } else return;
     // force: поле принадлежит динамическому списку и перерисовывается только по явным
     // действиям (добавить/удалить), поэтому перезапись XML-панели не сбрасывает фокус
     updateXmlOutput({ force: true });
     schedulePreview();
-});
-
-// Смена типа пропуска в выпадающем списке карточки cloze (событие change
-// на <select data-action="cloze-type"> не проходит через click-делегирование)
-document.addEventListener('change', (e) => {
-    const t = e.target;
-    if (!t.dataset || t.dataset.action !== 'cloze-type') return;
-    const q = currentQuestion();
-    const s = q && q.type === 'cloze' ? clozeBlankAt(q, t.dataset.seg) : null;
-    if (!s) return;
-    const nt = t.value.toUpperCase();
-    if (nt === s.blank.type) return;
-    s.blank.type = nt;
-    // при смене типа лишние атрибуты ответов безвредны — пересборка текста
-    q.text = buildClozeText(q.clozeSegments);
-    renderAnswers(); renderPreview(); updateXmlOutput();
 });
 
 document.addEventListener('click', (e) => {
@@ -392,33 +363,6 @@ document.addEventListener('click', (e) => {
     const q = state.quizData.questions[state.currentQuestionIndex];
     if (!q) return;
 
-    // ===== Cloze: действия с пропусками =====
-    if (action.startsWith('cloze-')) {
-        const s = clozeBlankAt(q, t.dataset.seg);
-        if (!s) return;
-        const b = s.blank;
-        const j = +t.dataset.a;
-        switch (action) {
-            case 'cloze-correct':
-                b.answers.forEach((a, i) => { a.correct = i === j; });
-                break;
-            case 'cloze-add-answer':
-                b.answers.push({ text: '', correct: b.answers.length === 0,
-                                 weight: b.answers.length ? 0 : 100, tolerance: 0 });
-                break;
-            case 'cloze-remove-answer':
-                if (b.answers.length <= 1) { showToast('У пропуска должен остаться хотя бы один ответ', true); return; }
-                b.answers.splice(j, 1);
-                break;
-            default:
-                return;
-        }
-        q.text = buildClozeText(q.clozeSegments);
-        els.qText.value = q.text;
-        renderAnswers(); renderPreview(); updateXmlOutput();
-        return;
-    }
-
     const j = +t.dataset.a;
     switch (action) {
         case 'set-correct':
@@ -428,6 +372,10 @@ document.addEventListener('click', (e) => {
             } else {
                 q.answers.forEach((a, i) => { a.correct = i === j; });
             }
+            // Синхронизируем fraction с отметкой «правильный»
+            q.answers.forEach(a => {
+                if (Number.isFinite(a.rawFraction)) a.rawFraction = a.correct ? 100 : 0;
+            });
             break;
         case 'remove-answer': {
             if (q.answers.length <= 2) { showToast('Минимум 2 варианта ответа', true); return; }
@@ -572,11 +520,11 @@ function buildDsMessage(mode) {
 //   shortanswer  — короткий текстовый ответ (несколько эталонных вариантов)
 //   numerical    — числовой ответ с допуском (±)
 //   description  — описание без ответа (<questiontext> пустой, текст в <description>)
-//   cloze          — текст с пропусками {...:TYPE:subtask%100%ответ%отличное#неполадочное}
 //   category     — служебный контейнер Moodle (пропускается молча)
+// Вложенные ответы (cloze/subquestions) не поддерживаются.
 // Остальные неизвестные типы пропускаются при разборе.
 // ============================================================
-const SUPPORTED_QTYPES = ['multichoice', 'truefalse', 'shortanswer', 'numerical', 'description', 'cloze'];
+const SUPPORTED_QTYPES = ['multichoice', 'truefalse', 'shortanswer', 'numerical', 'description'];
 
 // Типы, которые не участвуют в проверке ответов приложения (контейнеры/описания)
 const NON_QUESTION_TYPES = ['description'];
@@ -585,105 +533,22 @@ const NON_QUESTION_TYPES = ['description'];
 function qtypeName(type) {
     return ({ multichoice: 'Multichoice', truefalse: 'True/False',
               shortanswer: 'Short Answer', numerical: 'Numerical',
-              description: 'Описание (description)', cloze: 'Cloze (пропуски)' })[type] || type;
+              description: 'Описание (description)' })[type] || type;
 }
 
-// ===== Cloze: разбор и генерация пропусков =====
-// Синтаксис Moodle: текст {...:Тип:содержимое} текста
-//   Тип: MCMS      — выпадающий список: "верный%100%верно|иначе~неверный%0%ошибка"
-//                    варианты разделяются "|", неправильные добавляются через "~"
-//   T / F / MW     — текстовый пропуск: "ответ|альтернатива:фидбек"
-//   NUMERICAL      — числовой пропуск: "число&допуск|число2:фидбек"
-// Модель редактора для cloze: q.clozeSegments = [ {text} | {blank:{type,answers,feedback}} ]
-const CLOZE_TYPES = ['MCMS', 'T', 'F', 'MW', 'NUMERICAL'];
-const CLOZE_SPLIT_RE = /(\{\.\.\.[^{}]*\})/;
+// Доля балла (fraction) ответа: положительная дробь = верный (частичный) ответ
+function isCorrectFraction(frac) { return frac > 0; }
 
-// Разбор содержимого одного пропуска → { type, answers:[{text,weight?,tolerance?,correct}], feedback }
-function parseClozeBlank(inner) {
-    // inner — строка внутри {...: ... }, напр. "MCMS:Да%100%Да~Нет%0%Нет"
-    const segs = inner.split(':');
-    let type = (segs[0] || '').trim().toUpperCase();
-    if (!CLOZE_TYPES.includes(type)) type = 'MCMS';
-    const rest = segs.slice(1).join(':');
-
-    let answerPart = rest, feedback = '';
-    const fc = answerPart.lastIndexOf(':');
-    if (fc >= 0) { feedback = answerPart.slice(fc + 1); answerPart = answerPart.slice(0, fc); }
-
-    const answers = [];
-    if (type === 'MCMS') {
-        // "right%100%ralt~wrong%0%w" — группы через '~', внутри через '|'
-        answerPart.split('~').forEach((group, gi) => {
-            group.split('|').forEach(chunk => {
-                const m = chunk.match(/^(.*?)%(\d+)%(.*)$/s);
-                const text = m ? m[1].trim() : chunk.trim();
-                const weight = m ? parseInt(m[2], 10) : (gi === 0 ? 100 : 0);
-                if (text) answers.push({ text, weight, correct: gi === 0 });
-            });
-        });
-    } else if (type === 'NUMERICAL') {
-        answerPart.split('|').forEach(a => {
-            const amp = a.indexOf('&');
-            const t = (amp >= 0 ? a.slice(0, amp) : a).trim();
-            if (t) answers.push({ text: t,
-                tolerance: amp >= 0 ? (parseFloat(a.slice(amp + 1)) || 0) : 0, correct: true });
-        });
-    } else {
-        answerPart.split('|').forEach(a => {
-            const t = a.trim();
-            if (t) answers.push({ text: t, correct: true });
-        });
-    }
-    return { type, answers, feedback };
+// Числовое значение fraction ответа для генерации XML.
+// Если fraction задан явно в редакторе (a.rawFraction), используется он;
+// иначе — 100 для помеченных правильными и 0 для остальных.
+function answerFraction(q, a) {
+    if (Number.isFinite(a.rawFraction)) return a.rawFraction;
+    return a.correct ? 100 : 0;
 }
 
-// Разбор всего текста вопроса cloze на сегменты (обычный текст / пропуски)
-function parseClozeSegments(text) {
-    const out = [];
-    String(text || '').split(CLOZE_SPLIT_RE).forEach(part => {
-        if (!part) return;
-        const m = part.match(/^\{\.\.\.:([\s\S]*)\}$/);
-        if (m) out.push({ blank: parseClozeBlank(m[1]) });
-        else out.push({ text: part });
-    });
-    if (!out.some(p => p.blank)) out.push({ blank: { type: 'MCMS', answers: [], feedback: '' } });
-    return out;
-}
-
-function clozeSubtypeLabel(t) {
-    return ({ MCMS: 'Выпадающий список', T: 'Текст (короткий)', F: 'Текст (фраза)',
-              MW: 'Текст (слово)', NUMERICAL: 'Число ± допуск' })[t] || t;
-}
-
-// Сборка строки пропуска из модели
-function buildClozeBlank(b) {
-    let body = '';
-    if (b.type === 'MCMS') {
-        // Группы правильных (~) с весом 100, неправильные с весом 0
-        const right = b.answers.filter(a => a.correct);
-        const wrong = b.answers.filter(a => !a.correct);
-        const fmt = (arr, w) => arr.map(a => `${a.text}%${Number.isFinite(a.weight) ? a.weight : w}`).join('|');
-        body = [fmt(right, 100), fmt(wrong, 0)].filter(Boolean).join('~');
-    } else if (b.type === 'NUMERICAL') {
-        body = b.answers.map(a => String(a.text).trim() +
-            (Number(a.tolerance) ? '&' + a.tolerance : '')).join('|');
-    } else {
-        body = b.answers.map(a => String(a.text).trim()).join('|');
-    }
-    const fb = (b.feedback || '').trim();
-    return `{...:${b.type}:${body}${fb ? ':' + fb : ''}}`;
-}
-
-// Пересборка текста вопроса cloze из сегментов
-function buildClozeText(segments) {
-    return segments.map(s => s.blank ? buildClozeBlank(s.blank) : s.text).join('');
-}
-
-// Все ответы всех пропусков cloze-вопроса (для валидации)
-function clozeAllAnswers(q) {
-    return (q.clozeSegments || []).filter(s => s.blank)
-        .flatMap(s => s.blank.answers || []);
-}
+// Форматирование fraction для атрибута XML (без лишних хвостовых нулей)
+function fmtFraction(v) { return String(Math.round(v * 1000000) / 1000000); }
 
 // Проверка заполненности ответа по типу вопроса
 function answerFilled(q, a) {
@@ -700,12 +565,6 @@ function needsCorrectAnswer(q) {
 
 // Есть ли у вопроса корректно заполненный правильный ответ
 function hasValidCorrectAnswer(q) {
-    if (q.type === 'cloze') {
-        // Каждый пропуск cloze должен иметь хотя бы один непустой верный ответ
-        const blanks = (q.clozeSegments || []).filter(s => s.blank);
-        if (!blanks.length) return false;
-        return blanks.every(s => s.blank.answers.some(a => a.correct && String(a.text).trim()));
-    }
     if (q.type === 'description') return true; // описательный вопрос — ответов нет
     if (!needsCorrectAnswer(q)) return true;
     return q.answers.some(a => a.correct === true && answerFilled(q, a));
@@ -750,12 +609,6 @@ function parseQuestionNode(node) {
         answers: [],
     };
 
-    // Cloze: текст вопроса содержит пропуски {...:Тип:...}; разбираем на сегменты
-    if (type === 'cloze') {
-        q.clozeSegments = parseClozeSegments(q.text);
-        return q;
-    }
-
     // Description: содержимое в <description>, ответов нет
     if (type === 'description') {
         const dEl = node.querySelector(':scope > description > text');
@@ -764,7 +617,7 @@ function parseQuestionNode(node) {
     }
 
     if (type === 'truefalse') {
-        // Фиксированные варианты «Верно» / «Неверно»; правильный — fraction="100"
+        // Фиксированные варианты «Верно» / «Неверно»; правильный — fraction > 0
         q.answers = [
             { text: 'Верно',  correct: false },
             { text: 'Неверно', correct: false },
@@ -773,7 +626,7 @@ function parseQuestionNode(node) {
             const t = (a.querySelector(':scope > text')?.textContent || '').trim().toLowerCase();
             const frac = parseFloat(a.getAttribute('fraction') || '0');
             const idx = (t === 'true' || t === 'верно' || t === 'да' || t === 'истина') ? 0 : 1;
-            q.answers[idx].correct = frac > 0;
+            q.answers[idx].correct = isCorrectFraction(frac);
         });
         return q;
     }
@@ -784,21 +637,26 @@ function parseQuestionNode(node) {
         const frac = parseFloat(a.getAttribute('fraction') || '0');
         if (type === 'numerical') {
             // Числовой ответ + допуск (tolerance) из дочернего тега.
-            // В Moodle эталонные числа имеют fraction="100"; при разборе
-            // запоминаем и исходную дробь (rawFraction) для точной генерации.
+            // fraction задаётся явно в редакторе (по умолчанию 100);
+            // запоминаем исходную дробь (rawFraction) для точной генерации.
             ans.tolerance = parseFloat(a.querySelector(':scope > tolerance')?.textContent ?? '0') || 0;
-            ans.rawFraction = frac;
-            ans.correct = true; // все эталонные числа считаются правильными ответами
+            ans.rawFraction = Number.isFinite(frac) ? frac : 0;
+            ans.correct = isCorrectFraction(ans.rawFraction);
+        } else if (type === 'shortanswer') {
+            // Короткий ответ: fraction может быть задан явно (частичный балл)
+            ans.rawFraction = Number.isFinite(frac) ? frac : 0;
+            ans.correct = isCorrectFraction(ans.rawFraction);
         } else {
-            ans.correct = frac > 0;
+            ans.correct = isCorrectFraction(frac);
+            if (frac > 0 && frac < 100) ans.rawFraction = frac; // частичный балл множественного выбора
         }
         q.answers.push(ans);
     });
 
     if (type === 'multichoice' && !q.single) {
         // Множественный выбор: допускается несколько правильных вариантов
-        // (fraction 100 или положительная дробь при PARTIALCREDIT/NESTEDMODE)
-        q.answers.forEach(a => { a.correct = a.correct || parseFloat(a.rawFraction || 0) > 0; });
+        // (fraction 100 или положительная дробь при PARTIALCREDIT)
+        q.answers.forEach(a => { a.correct = a.correct || isCorrectFraction(a.rawFraction || 0); });
     } else if (type === 'multichoice') {
         // Одиночный выбор — оставляем первый правильный
         let firstCorrect = true;
@@ -836,7 +694,7 @@ function parseXmlToDataQuiet(xmlString) {
 
 // Генерация Moodle XML для одного вопроса — по его типу
 function generateQuestionXml(q) {
-    const qtext = (q.type === 'cloze' && q.clozeSegments) ? buildClozeText(q.clozeSegments) : q.text;
+    const qtext = q.text;
     const head =
         `    <question type="${q.type}">\n` +
         `        <name>\n            <text>${escapeXml(q.name)}</text>\n        </name>\n` +
@@ -852,11 +710,10 @@ function generateQuestionXml(q) {
         body = `        <single>${q.single ? 'true' : 'false'}</single>\n` +
                `        <shuffleanswers>${q.shuffleanswers ? 'true' : 'false'}</shuffleanswers>\n` +
                `        <answernumbering>${escapeXml(q.answernumbering || 'abc')}</answernumbering>\n`;
-        // multichoice: fraction 100/0 (одиночный) или дробь при множественном выборе
-        const correctCount = q.answers.filter(a => a.correct).length || 1;
-        const frac = (q.single || correctCount <= 1) ? '100' : String(Math.round(100 / correctCount));
+        // multichoice: fraction берётся из ответа (задаётся в редакторе);
+        // помеченный правильным без явной дроби получает 100
         tail = q.answers.map(a =>
-            `        <answer fraction="${a.correct ? frac : '0'}" format="html">\n            <text>${cdata(a.text)}</text>\n        </answer>\n`
+            `        <answer fraction="${fmtFraction(answerFraction(q, a))}" format="html">\n            <text>${cdata(a.text)}</text>\n        </answer>\n`
         ).join('');
     } else if (q.type === 'truefalse') {
         tail = q.answers.map(a =>
@@ -864,7 +721,7 @@ function generateQuestionXml(q) {
         ).join('');
     } else if (q.type === 'numerical') {
         tail = q.answers.map(a =>
-            `        <answer fraction="${Number.isFinite(a.rawFraction) ? a.rawFraction : '100'}" format="moodle_auto_format">\n` +
+            `        <answer fraction="${fmtFraction(answerFraction(q, a))}" format="moodle_auto_format">\n` +
             `            <text>${escapeXml(String(a.text ?? '').trim())}</text>\n` +
             `            <tolerance>${Number.isFinite(a.tolerance) ? a.tolerance : 0}</tolerance>\n` +
             `        </answer>\n`
@@ -873,12 +730,9 @@ function generateQuestionXml(q) {
         return head +
             `        <description format="html">\n            <text>${cdata(qtext)}</text>\n        </description>\n` +
             '    </question>\n';
-    } else if (q.type === 'cloze') {
-        // Пропуски уже содержатся в тексте вопроса (<questiontext>) — отдельных тегов ответов нет
-        return head + '    </question>\n';
     } else { // shortanswer
         tail = q.answers.map(a =>
-            `        <answer fraction="${a.correct ? '100' : '0'}" format="plain">\n            <text>${escapeXml(a.text)}</text>\n        </answer>\n`
+            `        <answer fraction="${fmtFraction(answerFraction(q, a))}" format="plain">\n            <text>${escapeXml(a.text)}</text>\n        </answer>\n`
         ).join('');
     }
     return head + body + tail + '    </question>\n';
@@ -917,15 +771,12 @@ function newQuestion(type = 'multichoice') {
     if (type === 'truefalse') {
         base.answers = [{ text: 'Верно', correct: true }, { text: 'Неверно', correct: false }];
     } else if (type === 'shortanswer') {
-        base.answers = [{ text: '', correct: true }, { text: '', correct: false }];
+        base.answers = [{ text: '', correct: true, rawFraction: 100 }, { text: '', correct: false, rawFraction: 0 }];
     } else if (type === 'numerical') {
-        base.answers = [{ text: '', correct: true, tolerance: 0 }, { text: '', correct: false, tolerance: 0 }];
+        base.answers = [{ text: '', correct: true, tolerance: 0, rawFraction: 100 },
+                        { text: '', correct: false, tolerance: 0, rawFraction: 0 }];
     } else if (type === 'description') {
         base.text = '<p>Текст описания (без ответа)</p>';
-    } else if (type === 'cloze') {
-        // Один пропуск по умолчанию; текст — источник истины, сегменты парсятся из него
-        base.text = '<p>Вставьте текст с пропуском вида {...:MCMS:верно%100~неверно%0}</p>';
-        base.clozeSegments = parseClozeSegments(base.text);
     } else {
         base.answers = [{ text: '', correct: true }, { text: '', correct: false }];
     }
@@ -978,68 +829,32 @@ function updateTypeDependentUI() {
     // Тег <single> относится только к multichoice
     const singleRow = document.getElementById('qSingleRow');
     if (singleRow) singleRow.classList.toggle('hidden', !isChoice);
-    // Кнопка добавления варианта — не нужна у truefalse (2 фиксированных варианта),
-    // description (ответов нет) и cloze (пропуски редактируются в своём списке)
+    // Кнопка добавления варианта — не нужна у truefalse (2 фиксированных варианта)
+    // и description (ответов нет)
     const addBtn = document.getElementById('btnAddAnswer');
-    if (addBtn) addBtn.classList.toggle('hidden', type === 'truefalse' || type === 'description' || type === 'cloze');
+    if (addBtn) addBtn.classList.toggle('hidden', type === 'truefalse' || type === 'description');
+    // Поле fraction в строке ответа: имеет смысл для shortanswer/numerical
+    // (несколько эталонных ответов с явной долей балла)
+    state.showFractionInput = (type === 'shortanswer' || type === 'numerical');
     // Подсказки под списком ответов — по типу
     const hints = {
         multichoice: 'Нажмите на кружок слева, чтобы отметить правильный ответ (fraction = 100). Остальные получат fraction = 0.',
         truefalse: 'Отметьте кружком верный вариант: «Верно» (true) или «Неверно» (false).',
-        shortanswer: 'Перечислите допустимые эталонные ответы (каждый засчитывается как верный). Лишние пустые строки будут пропущены.',
-        numerical: 'Укажите число и допуск ± (tolerance). Можно добавить несколько эталонных чисел.',
+        shortanswer: 'Перечислите допустимые эталонные ответы. Для каждого можно задать долю балла fraction (по умолчанию 100; 0 — неверный ответ).',
+        numerical: 'Укажите число и допуск ± (tolerance). Можно добавить несколько эталонных чисел и задать им fraction.',
         description: 'Вопрос-описание: текст выводится перед другими вопросами, ответов и проверки нет.',
-        cloze: 'Пропуски задаются в тексте вопроса: {...:MCMS:верно%100~неверно%0}, {...:T:ответ|альтернатива:фидбек}, {...:NUMERICAL:число&допуск}. Ниже можно отредактировать каждый пропуск.',
     };
     const hintEl = document.getElementById('answersHint');
     if (hintEl) hintEl.textContent = hints[type] || '';
     const titleEl = document.getElementById('answersTitle');
     if (titleEl) titleEl.textContent = type === 'shortanswer' ? 'Эталонные ответы'
         : type === 'numerical' ? 'Эталонные числа'
-        : type === 'cloze' ? 'Пропуски (subquestions)'
         : type === 'description' ? '' : 'Варианты ответов';
-}
-
-// Список пропусков для cloze-вопроса
-function renderClozeBlanks(q) {
-    els.answersContainer.innerHTML = (q.clozeSegments || []).map((s, si) => {
-        if (!s.blank) return '';
-        const b = s.blank;
-        const isMC = b.type === 'MCMS';
-        const isNum = b.type === 'NUMERICAL';
-        const rows = b.answers.map((a, j) => `
-            <div class="option-row ${a.correct ? 'correct' : ''}">
-                <div class="radio ${a.correct ? 'selected' : ''}" data-action="cloze-correct" data-seg="${si}" data-a="${j}"
-                     title="Отметить как ${isMC ? 'верный вариант списка' : 'эталонный ответ'}"></div>
-                <span class="frac-badge ${a.correct ? 'frac-100' : 'frac-0'}">${a.correct ? (isMC ? '100%' : '✔') : (isMC ? '0%' : '')}</span>
-                <input type="${isNum ? 'number' : 'text'}" step="any" class="opt-input"
-                       data-action="cloze-answer" data-seg="${si}" data-a="${j}"
-                       placeholder="${isNum ? 'Число' : 'Текст ответа'}" value="${escAttr(a.text ?? '')}">
-                ${isNum ? `<input type="number" step="any" min="0" class="input-base tol-input" data-action="cloze-tolerance" data-seg="${si}" data-a="${j}" value="${Number.isFinite(a.tolerance) ? a.tolerance : 0}" title="Допуск ±">` : ''}
-                <button type="button" class="btn-icon" data-action="cloze-remove-answer" data-seg="${si}" data-a="${j}" title="Удалить ответ">&#10005;</button>
-            </div>`).join('');
-        const fb = `<input type="text" class="input-base" style="flex:1" placeholder="Обратная связь (feedback)"
-                        data-action="cloze-feedback" data-seg="${si}" value="${escAttr(b.feedback ?? '')}">`;
-        return `
-        <div class="cloze-blank-card">
-            <div class="cloze-blank-head">
-                <strong>Пропуск ${si + 1}</strong>
-                <select class="input-base" data-action="cloze-type" data-seg="${si}" title="Тип пропуска">
-                    ${['MCMS', 'T', 'F', 'MW', 'NUMERICAL'].map(t =>
-                        `<option value="${t}" ${b.type === t ? 'selected' : ''}>${clozeSubtypeLabel(t)}</option>`).join('')}
-                </select>
-                <button type="button" class="btn btn-sm" data-action="cloze-add-answer" data-seg="${si}">+ Ответ</button>
-            </div>
-            ${rows || '<div class="empty-hint">Нет ответов в пропуске</div>'}
-            ${fb}
-        </div>`;
-    }).join('') || '<div class="empty-hint">В тексте вопроса нет пропусков. Добавьте в текст вида {...:MCMS:верно%100~неверно%0}</div>';
 }
 
 function renderAnswers() {
     const q = currentQuestion();
     const type = q.type || 'multichoice';
-    if (type === 'cloze') { renderClozeBlanks(q); return; }
     if (type === 'description') {
         els.answersContainer.innerHTML = '<div class="empty-hint">У вопроса-описания ответов нет.</div>';
         return;
@@ -1048,10 +863,16 @@ function renderAnswers() {
         els.answersContainer.innerHTML = '<div class="empty-hint">Нет вариантов ответа.</div>';
         return;
     }
+    const showFrac = state.showFractionInput;
     els.answersContainer.innerHTML = q.answers.map((a, j) => {
-        const radio = (type === 'shortanswer')
-            ? `<span class="frac-badge ${a.correct ? 'frac-100' : 'frac-0'}" title="Эталонный ответ">${a.correct ? '✔' : '—'}</span>`
-            : `<div class="radio ${a.correct ? 'selected' : ''}" data-action="set-correct" data-a="${j}" title="Отметить как правильный${type === 'numerical' ? ' (эталон)' : ' (fraction = 100)'}"></div>`;
+        const radio = `<div class="radio ${a.correct ? 'selected' : ''}" data-action="set-correct" data-a="${j}" title="Отметить как правильный (fraction = 100)"></div>`;
+        const fracVal = answerFraction(q, a);
+        const badgeCls = fracVal >= 100 ? 'frac-100' : (fracVal > 0 ? 'frac-partial' : 'frac-0');
+        const badge = showFrac ? '' :
+            `<span class="frac-badge ${badgeCls}">${fmtFraction(fracVal)}%</span>`;
+        const fracInput = showFrac ?
+            `<input type="number" step="any" min="0" max="100" class="input-base tol-input frac-input" data-action="update-fraction" data-a="${j}"
+                   value="${fmtFraction(fracVal)}" title="Доля балла (fraction): 100 — верный ответ, 0 — неверный, промежуточное значение — частичный балл">` : '';
         const tol = type === 'numerical'
             ? `<input type="number" step="any" min="0" class="input-base tol-input" data-action="update-tolerance" data-a="${j}"
                    value="${Number.isFinite(a.tolerance) ? a.tolerance : 0}" title="Допуск ± (tolerance)">`
@@ -1063,9 +884,10 @@ function renderAnswers() {
         return `
         <div class="option-row ${a.correct ? 'correct' : ''}">
             ${radio}
-            <span class="frac-badge ${a.correct ? 'frac-100' : 'frac-0'}">${a.correct ? (type === 'numerical' ? 'эталон' : '100%') : (type === 'numerical' ? '' : '0%')}</span>
+            ${badge}
             <input type="${inputType}" step="any" class="opt-input" data-action="update-answer" data-a="${j}"
                 placeholder="${ph}" value="${escAttr(a.text ?? '')}">
+            ${fracInput}
             ${tol}
             <button type="button" class="btn-icon" data-action="remove-answer" data-a="${j}" title="Удалить ответ">&#10005;</button>
         </div>`;
