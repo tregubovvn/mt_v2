@@ -129,6 +129,8 @@ function cacheElements() {
         'promptsModal', 'promptList', 'newPromptName', 'btnAddPrompt', 'promptsGistUrl',
         'btnReloadPrompts', 'btnSavePromptsToGist',
         'promptEditorModal', 'promptEditorArea', 'promptEditorInfo',
+        // Поля токенов в окне настроек (используются через els в loadSettings/saveSettings)
+        'githubToken', 'deepseekToken', 'gitverseToken',
     ];
     els = {};
     ids.forEach(id => { els[id] = document.getElementById(id); });
