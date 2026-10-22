@@ -887,39 +887,9 @@ body.ai-busy .workspace, body.ai-busy .topbar { pointer-events: none; user-selec
     color: #fbbf24; border-radius: 8px; padding: 0.5rem 0.8rem; font-size: 0.85rem; margin-bottom: 0.8rem;
 }
 
-/* ===== Cloze: карточки пропусков в редакторе ответов ===== */
-.cloze-blank-card {
-    border: 1px solid var(--border); border-radius: 10px;
-    padding: 0.7rem 0.8rem; margin-bottom: 0.8rem;
-    background: rgba(79, 70, 229, 0.04);
+/* ===== Fraction: поле балла ответа и частичный балл ===== */
+.frac-partial {
+    display: inline-block; padding: 0.1rem 0.45rem; border-radius: 6px;
+    background: rgba(245, 158, 11, 0.15); color: #b45309;
+    font-size: 0.78rem; font-weight: 600; white-space: nowrap;
 }
-.cloze-blank-head {
-    display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
-    margin-bottom: 0.5rem; font-weight: 600; font-size: 0.9rem;
-}
-.cloze-blank-head select { max-width: 220px; }
-.cloze-answer-row {
-    display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.4rem;
-}
-.cloze-answer-row input[type="text"], .cloze-answer-row input:not([type]) { flex: 1; min-width: 0; }
-.cloze-answer-row .tol-input { width: 90px; flex: none; }
-.cloze-radio {
-    width: 18px; height: 18px; flex: none; cursor: pointer;
-    accent-color: var(--primary, #4f46e5);
-}
-.cloze-feedback-row { margin-top: 0.3rem; }
-.cloze-feedback-row input { width: 100%; }
-
-/* ===== Cloze: предпросмотр (инлайн-пропуски) ===== */
-.pv-cloze-blank { display: inline-block; margin: 0 2px; vertical-align: middle; }
-.pv-cloze-select {
-    padding: 0.15rem 0.4rem; border: 1px dashed var(--border);
-    border-radius: 6px; background: rgba(79, 70, 229, 0.06); font-size: 0.9em;
-    max-width: 220px;
-}
-.pv-cloze-input {
-    width: 110px; padding: 0.15rem 0.4rem; border: 1px dashed var(--border);
-    border-radius: 6px; background: rgba(79, 70, 229, 0.06); font-size: 0.9em;
-}
-.pv-cloze-blank.missing .pv-cloze-select,
-.pv-cloze-blank.missing .pv-cloze-input { border-color: #ef4444; background: #fef2f2; }
