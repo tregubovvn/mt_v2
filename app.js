@@ -1452,19 +1452,45 @@ function addSummaryRow(container, label, value) {
     return row;
 }
 
-function renderResultsSummary(endDateTimeStr) {
+// Служебное форматирование Date -> «дд.мм.гггг чч:мм:сс» (ru-RU)
+function formatDateTime(date) {
+    return date.toLocaleString('ru-RU', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+}
+
+// Обязательная итоговая сводка: ФИО, оценка, тема, начало теста, окончание теста,
+// затраченное время, пропущенные вопросы. Все поля выводятся всегда; если данных
+// нет — показывается «—».
+function renderResultsSummary(data) {
     resultsSummary.innerHTML = '';
 
-    // 1. Дата и время окончания теста
-    addSummaryRow(resultsSummary, 'Дата и время окончания теста', endDateTimeStr);
+    // 1. ФИО студента
+    addSummaryRow(resultsSummary, 'ФИО', data.studentName || '—');
 
-    // 2. Название темы — только если в XML есть <topicName>
-    if (testTopicName) {
-        addSummaryRow(resultsSummary, 'Тема', testTopicName);
-    }
+    // 2. Оценка (5-балльная шкала) и процент правильных ответов
+    const gradeNames = { 5: 'отлично', 4: 'хорошо', 3: 'удовлетворительно', 2: 'неудовлетворительно' };
+    const gradeText = `${data.grade} (${gradeNames[data.grade] || '—'}), ${data.percent}% правильных ответов`;
+    addSummaryRow(resultsSummary, 'Оценка', gradeText);
 
-    // 3. Затраченное время
-    addSummaryRow(resultsSummary, 'Затраченное время', formatTime(timeSpent));
+    // 3. Тема теста (<topicName> из XML, при отсутствии — название теста)
+    addSummaryRow(resultsSummary, 'Тема', data.topic || '—');
+
+    // 4. Начало теста
+    addSummaryRow(resultsSummary, 'Начало теста', data.startDateTimeStr || '—');
+
+    // 5. Окончание теста
+    addSummaryRow(resultsSummary, 'Окончание теста', data.endDateTimeStr || '—');
+
+    // 6. Затраченное время
+    addSummaryRow(resultsSummary, 'Затраченное время', data.timeSpentStr || '—');
+
+    // 7. Пропущенные вопросы (без ответа) — номера вопросов
+    const skippedText = data.skippedNumbers.length > 0
+        ? `${data.skippedNumbers.length} (вопросы № ${data.skippedNumbers.join(', ')})`
+        : 'Нет';
+    addSummaryRow(resultsSummary, 'Пропущенные вопросы', skippedText);
 }
 
 // ===== Завершение теста =====
@@ -1487,6 +1513,12 @@ function finishTest() {
     const pct = total > 0 ? Math.round(correct / total * 100) : 0;
     const grade = GRADE_THRESHOLDS.find(t => pct >= t.min)?.grade ?? 2;
 
+    // Пропущенные вопросы — без ответа любого типа (нумерация по общему списку)
+    const skippedNumbers = questions
+        .map((q, i) => ({ q, i }))
+        .filter(({ q, i }) => q.type !== 'description' && !hasAnswer(i))
+        .map(({ i }) => i + 1);
+
     // Заполнение интерфейса
     testSection.classList.add('hidden');
     resultsSection.classList.remove('hidden');
@@ -1502,12 +1534,20 @@ function finishTest() {
         scoreRing.style.strokeDashoffset = SCORE_RING_LENGTH - (SCORE_RING_LENGTH * pct / 100);
     }, 100);
 
-    // Итоговая сводка: дата/время окончания → тема (если есть) → время
-    const endDateTimeStr = new Date().toLocaleString('ru-RU', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    // Итоговая сводка (обязательные поля): ФИО, оценка, тема, начало, окончание,
+    // затраченное время, пропущенные вопросы
+    const startDateTimeStr = startTime ? formatDateTime(new Date(startTime)) : '';
+    const endDateTimeStr = formatDateTime(new Date());
+    renderResultsSummary({
+        studentName: studentName || '',
+        grade: grade,
+        percent: pct,
+        topic: testTopicName || getTestTitle(),
+        startDateTimeStr: startDateTimeStr,
+        endDateTimeStr: endDateTimeStr,
+        timeSpentStr: formatTime(timeSpent),
+        skippedNumbers: skippedNumbers
     });
-    renderResultsSummary(endDateTimeStr);
 
     // Сохраняем данные результата — они подставляются в запись Student Tracker,
     // чтобы студенту нужно было ввести только свой ИД (студенческий билет)
@@ -1521,7 +1561,9 @@ function finishTest() {
         grade: grade,
         timeSpent: timeSpent,
         timeSpentStr: formatTime(timeSpent),
+        startDateTimeStr: startDateTimeStr,
         endDateTimeStr: endDateTimeStr,
+        skippedCount: skippedNumbers.length,
         saved: false
     };
     initTrackerCard();
@@ -1677,17 +1719,21 @@ function getTestTitle() {
     return 'Тест';
 }
 
-// Примечание к записи: ФИО, группа, количество вопросов,
-// количество правильных ответов, затраченное время (+ сводка результата)
+// Примечание к записи: ФИО, тема, оценка, начало и окончание теста,
+// затраченное время, пропущенные вопросы (+ количество правильных ответов)
 function buildTrackerComment(res) {
     const parts = [
         `ФИО: ${res.studentName || '—'}`,
         `Группа: ${res.studentGroup || '—'}`,
+        `Тема: ${res.testTitle || '—'}`,
+        `Начало теста: ${res.startDateTimeStr || '—'}`,
+        `Окончание теста: ${res.endDateTimeStr || '—'}`,
+        `Затраченное время: ${res.timeSpentStr}`,
+        `Пропущенные вопросы: ${res.skippedCount || 0}`,
         `Вопросов: ${res.totalQuestions}`,
         `Правильных ответов: ${res.correctAnswers}`,
-        `Затрачено времени: ${res.timeSpentStr}`,
     ];
-    return `${parts.join('; ')} Результат: ${res.percent}% (оценка ${res.grade}), завершён ${res.endDateTimeStr}.`;
+    return `${parts.join('; ')} Результат: ${res.percent}% (оценка ${res.grade}).`;
 }
 
 function setTrackerStatus(message, type) {
