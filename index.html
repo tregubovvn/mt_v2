@@ -658,9 +658,13 @@
                     <label for="firstNameInput">Имя *</label>
                     <input type="text" id="firstNameInput" placeholder="Иван" autocomplete="given-name">
                 </div>
-                <div class="field field-full">
-                    <label for="middleNameInput">Группа</label>
-                    <input type="text" id="middleNameInput" placeholder="б1_МЕНЖ-11 (необязательно)" autocomplete="organization">
+                <div class="field">
+                    <label for="middleNameInput">Отчество</label>
+                    <input type="text" id="middleNameInput" placeholder="Иванович" autocomplete="additional-name">
+                </div>
+                <div class="field">
+                    <label for="groupInput">Группа</label>
+                    <input type="text" id="groupInput" placeholder="б1_МЕНЖ-11" autocomplete="organization">
                 </div>
             </div>
             <div id="nameError" class="name-error hidden"></div>
@@ -693,6 +697,8 @@
         </div>
     </div>
 
+    <!-- Student Tracker API (сохранение результатов): window.StudentAPI -->
+    <script src="https://tregubovvn.github.io/save_all_result/public/api.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
