@@ -149,10 +149,43 @@ function formatTime(totalSeconds) {
 }
 
 function friendlyError(error) {
-    if (error instanceof TypeError && /fetch/i.test(error.message)) {
-        return new Error('Не удалось загрузить файл. Проверьте ссылку, доступность файла и разрешения CORS на сервере.');
+    if (error instanceof TypeError && /fetch|load/i.test(error.message)) {
+        return new Error(
+            'Не удалось загрузить файл. Это может быть вызвано ограничениями CORS на стороне сервера, ' +
+            'который отдаёт XML-файл. Проверьте ссылку и доступность файла. ' +
+            'Решение: используйте прямые ссылки с GitHub Pages / raw.githubusercontent.com, ' +
+            'загружайте файл через Яндекс.Диск или отредактируйте тест во встроенном редакторе.'
+        );
     }
     return error;
+}
+
+// ===== Загрузка файла с обходом CORS =====
+// Публичные CORS-прокси позволяют читать XML-файлы с серверов, которые не отдают
+// заголовок Access-Control-Allow-Origin (например, disk.yandex.ru при скачивании).
+// Если прокси недоступен — оригинальная ошибка будет проброшена наверх как раньше.
+const CORS_PROXY_PREFIXES = [
+    'https://api.allorigins.win/raw?url=',
+    'https://api.codetabs.com/v1/proxy/?quest=',
+];
+
+async function fetchWithCorsFallback(target) {
+    try {
+        // Сначала пробуем напрямую (работает, если сервер настроил CORS)
+        return await fetch(target);
+    } catch (err) {
+        if (!(err instanceof TypeError)) throw err; // не сетевая ошибка — не трогаем
+        let lastErr = err;
+        for (const prefix of CORS_PROXY_PREFIXES) {
+            try {
+                const resp = await fetch(prefix + encodeURIComponent(target));
+                if (resp.ok) return resp;
+            } catch (e) {
+                lastErr = e;
+            }
+        }
+        throw lastErr; // все попытки провалились -> стандартная ошибка TypeError о fetch/CORS
+    }
 }
 
 // Перемешивание массива на месте (Фишер—Йетс) — используется для вопросов и вариантов
@@ -313,7 +346,7 @@ async function fetchAndParseTest(url) {
         target = data.href;
     }
 
-    const response = await fetch(target);
+    const response = await fetchWithCorsFallback(target);
     if (!response.ok) throw new Error(`Ошибка HTTP: ${response.status}`);
     const xmlContent = await response.text();
     parseMoodleXML(xmlContent);
