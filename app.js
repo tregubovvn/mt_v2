@@ -7,6 +7,10 @@ const CRUSH_MAX_ERRORS = 3; // максимум ошибок за одну се�
 const LETTERS = ['А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З', 'И', 'К'];
 const YANDEX_API_PREFIX = 'https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=';
 const STORAGE_KEY_STUDENT = 'quizStudent';
+const STORAGE_KEY_TRACKER_ID = 'quizStudentTrackerId'; // ИД студента (студенческий билет) для Student Tracker
+// Student Tracker — сервис сохранения результатов (см. embed-example.html репозитория save_all_result)
+const TRACKER_BASE_URL = 'https://tregubovvn.github.io/save_all_result/public/';
+const TRACKER_API_URL = TRACKER_BASE_URL + 'api.js';
 const SCORE_RING_LENGTH = 440;      // длина окружности индикатора результата (2·π·70)
 const GRADE_THRESHOLDS = [          // процент правильных ответов -> оценка по 5-балльной шкале
     { min: 85, grade: 5 },
@@ -62,6 +66,8 @@ let startTime = null;         // момент старта теста (Date.now(
 let timerInterval = null;
 let timeSpent = 0;            // секунды с момента старта теста
 let studentName = '';
+let studentGroup = '';        // группа студента (вводится на старте, сохраняется в localStorage)
+let lastResult = null;        // данные последнего завершённого теста (для сохранения в Student Tracker)
 let pendingStartAfterName = false; // автозагрузка ждёт подтверждения ФИО
 let qrScannerActive = false;
 let videoStream = null;
@@ -112,6 +118,7 @@ const welcomeOverlay = document.getElementById('welcomeOverlay');
 const lastNameInput = document.getElementById('lastNameInput');
 const firstNameInput = document.getElementById('firstNameInput');
 const middleNameInput = document.getElementById('middleNameInput');
+const groupInput = document.getElementById('groupInput');
 const nameError = document.getElementById('nameError');
 const confirmNameBtn = document.getElementById('confirmNameBtn');
 const qrModal = document.getElementById('qrModal');
@@ -123,6 +130,10 @@ const crushBadge = document.getElementById('crushBadge');
 const headerBadge = document.getElementById('headerBadge');
 const crushAttemptsPill = document.getElementById('crushAttemptsPill');
 const checkAnswerBtn = document.getElementById('checkAnswerBtn'); // «Проверить ответ» — единая кнопка проверки (CheckMode и/или CrushMode)
+const trackerCard = document.getElementById('trackerCard');
+const trackerStudentIdInput = document.getElementById('trackerStudentIdInput');
+const trackerSaveBtn = document.getElementById('trackerSaveBtn');
+const trackerStatus = document.getElementById('trackerStatus');
 
 
 // ===== Вспомогательные функции =====
@@ -202,9 +213,19 @@ function protectMathAngles(html) {
 }
 
 // ===== Логика ФИО =====
+// Фамилия / Имя / Отчество — три отдельных поля приветствия
+function getLastName() {
+    return lastNameInput.value.trim();
+}
+
 function getFullName() {
     return [lastNameInput.value.trim(), firstNameInput.value.trim(), middleNameInput.value.trim()]
         .filter(Boolean).join(' ');
+}
+
+// Группа студента (поле «Группа» в приветственном окне)
+function getGroup() {
+    return groupInput ? groupInput.value.trim() : '';
 }
 
 function updateStudentUI() {
