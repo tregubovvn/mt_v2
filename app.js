@@ -98,11 +98,8 @@ const nextBtn = document.getElementById('nextBtn');
 const finishBtn = document.getElementById('finishBtn');
 const resultsSection = document.getElementById('resultsSection');
 const resultsSummary = document.getElementById('resultsSummary');
-const resultAvatar = document.getElementById('resultAvatar');
-const resultStudentName = document.getElementById('resultStudentName');
 const scoreRing = document.getElementById('scoreRing');
 const scoreElement = document.getElementById('score');
-const gradePill = document.getElementById('gradePill');
 const correctAnswersElement = document.getElementById('correctAnswers');
 const totalAnswersElement = document.getElementById('totalAnswers');
 const timeSpentElement = document.getElementById('timeSpent');
@@ -115,7 +112,6 @@ const chipName = document.getElementById('chipName');
 const welcomeOverlay = document.getElementById('welcomeOverlay');
 const lastNameInput = document.getElementById('lastNameInput');
 const firstNameInput = document.getElementById('firstNameInput');
-const middleNameInput = document.getElementById('middleNameInput');
 const groupInput = document.getElementById('groupInput');
 const nameError = document.getElementById('nameError');
 const confirmNameBtn = document.getElementById('confirmNameBtn');
@@ -131,13 +127,7 @@ const checkAnswerBtn = document.getElementById('checkAnswerBtn'); // «Пров�
 const trackerCard = document.getElementById('trackerCard');
 const trackerStudentIdInput = document.getElementById('trackerStudentIdInput');
 const trackerSaveBtn = document.getElementById('trackerSaveBtn');
-const trackerViewBtn = document.getElementById('trackerViewBtn');
 const trackerStatus = document.getElementById('trackerStatus');
-const trackerGradesPanel = document.getElementById('trackerGradesPanel');
-const trackerGradesFrame = document.getElementById('trackerGradesFrame');
-const trackerGradesFallback = document.getElementById('trackerGradesFallback');
-const trackerOpenNewTab = document.getElementById('trackerOpenNewTab');
-const trackerGradesCloseBtn = document.getElementById('trackerGradesCloseBtn');
 
 
 // ===== Вспомогательные функции =====
@@ -217,9 +207,9 @@ function protectMathAngles(html) {
 }
 
 // ===== Логика ФИО =====
-// Фамилия / Имя / Отчество — три отдельных поля приветствия
+// Фамилия / Имя — два поля приветствия (отчество не используется)
 function getFullName() {
-    return [lastNameInput.value.trim(), firstNameInput.value.trim(), middleNameInput.value.trim()]
+    return [lastNameInput.value.trim(), firstNameInput.value.trim()]
         .filter(Boolean).join(' ');
 }
 
@@ -235,8 +225,6 @@ function updateStudentUI() {
     chipName.textContent = parts.length > 1
         ? `${parts[0]} ${parts[1][0]}.` : studentName;
     studentChip.classList.remove('hidden');
-    resultStudentName.textContent = studentName;
-    resultAvatar.textContent = initials || '—';
 }
 
 function confirmName() {
@@ -252,7 +240,7 @@ function confirmName() {
     studentGroup = getGroup();
     try {
         localStorage.setItem(STORAGE_KEY_STUDENT, JSON.stringify({
-            l, f, m: middleNameInput.value.trim(), g: studentGroup
+            l, f, g: studentGroup
         }));
     } catch (e) { console.warn('localStorage недоступен', e); }
     updateStudentUI();
@@ -273,9 +261,7 @@ function openNameOverlay() {
         if (saved) {
             lastNameInput.value = saved.l || '';
             firstNameInput.value = saved.f || '';
-            middleNameInput.value = saved.m || '';
-            // старые записи могли хранить группу в поле «Отчество» — мигрируем
-            groupInput.value = saved.g !== undefined ? saved.g : (saved.m || '');
+            groupInput.value = saved.g || '';
         }
     } catch (e) {}
     pendingStartAfterName = false;
@@ -1433,24 +1419,18 @@ function addSummaryRow(container, label, value) {
     return row;
 }
 
-function renderResultsSummary(endDateTimeStr, grade) {
+function renderResultsSummary(endDateTimeStr) {
     resultsSummary.innerHTML = '';
 
-    // 1. ФИО студента
-    addSummaryRow(resultsSummary, 'Студент', studentName || '—');
-
-    // 2. Дата и время окончания теста
+    // 1. Дата и время окончания теста
     addSummaryRow(resultsSummary, 'Дата и время окончания теста', endDateTimeStr);
 
-    // 3. Название темы — только если в XML есть <topicName>
+    // 2. Название темы — только если в XML есть <topicName>
     if (testTopicName) {
         addSummaryRow(resultsSummary, 'Тема', testTopicName);
     }
 
-    // 4. Полученная оценка
-    addSummaryRow(resultsSummary, 'Оценка', String(grade));
-
-    // 5. Затраченное время
+    // 3. Затраченное время
     addSummaryRow(resultsSummary, 'Затраченное время', formatTime(timeSpent));
 }
 
@@ -1483,21 +1463,18 @@ function finishTest() {
     timeSpentElement.textContent = formatTime(timeSpent);
     scoreElement.textContent = pct + '%';
 
-    gradePill.className = 'grade-pill grade-' + grade;
-    gradePill.textContent = 'Оценка: ' + grade;
-
     // Анимация кольца
     scoreRing.style.strokeDashoffset = SCORE_RING_LENGTH;
     setTimeout(() => {
         scoreRing.style.strokeDashoffset = SCORE_RING_LENGTH - (SCORE_RING_LENGTH * pct / 100);
     }, 100);
 
-    // Итоговая сводка: ФИО → дата/время окончания → тема (если есть) → оценка → время
+    // Итоговая сводка: дата/время окончания → тема (если есть) → время
     const endDateTimeStr = new Date().toLocaleString('ru-RU', {
         day: '2-digit', month: '2-digit', year: 'numeric',
         hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
-    renderResultsSummary(endDateTimeStr, grade);
+    renderResultsSummary(endDateTimeStr);
 
     // Сохраняем данные результата — они подставляются в запись Student Tracker,
     // чтобы студенту нужно было ввести только свой ИД (студенческий билет)
@@ -1687,21 +1664,17 @@ function setTrackerStatus(message, type) {
     if (!message) trackerStatus.classList.add('hidden');
 }
 
-function hideGradesPanel() {
-    trackerGradesPanel.classList.add('hidden');
-    trackerGradesFrame.classList.remove('hidden');
-    trackerGradesFallback.classList.add('hidden');
-    trackerGradesFrame.src = 'about:blank';
+// Ссылка на страницу всех оценок студента в Student Tracker
+function trackerStudentPageUrl(studentId) {
+    return `${TRACKER_STUDENT_PAGE}?id=${encodeURIComponent(studentId)}`;
 }
 
 // Подготовка карточки при каждом завершении теста: подстановка сохранённого ИД,
-// сброс состояния и скрытие панели оценок
+// сброс состояния
 function initTrackerCard() {
     trackerCard.classList.remove('tracker-ok', 'tracker-error');
     trackerSaveBtn.disabled = false;
     trackerSaveBtn.textContent = '💾 Сохранить результат';
-    trackerViewBtn.classList.add('hidden');
-    hideGradesPanel();
     let savedId = '';
     try { savedId = localStorage.getItem(STORAGE_KEY_TRACKER_ID) || ''; } catch (e) {}
     if (savedId) trackerStudentIdInput.value = savedId;
@@ -1736,9 +1709,10 @@ async function saveResultToTracker() {
         if (result && result.success) {
             lastResult.saved = true;
             try { localStorage.setItem(STORAGE_KEY_TRACKER_ID, studentId); } catch (e) {}
-            setTrackerStatus('✅ Результат сохранён. Кнопка «Все оценки по ИД» показывает историю студента.', 'ok');
+            setTrackerStatus('✅ Результат сохранён. Все оценки студента открыты в новой вкладке.', 'ok');
             trackerSaveBtn.textContent = '✓ Сохранено';
-            trackerViewBtn.classList.remove('hidden'); // рядом появляется кнопка просмотра всех оценок
+            // все оценки студента — сразу в новой вкладке
+            window.open(trackerStudentPageUrl(studentId), '_blank', 'noopener');
         } else {
             throw new Error(result && result.message ? result.message : 'Сервер отклонил запись');
         }
@@ -1747,82 +1721,6 @@ async function saveResultToTracker() {
         trackerSaveBtn.disabled = false;
         trackerSaveBtn.textContent = '💾 Сохранить результат';
     }
-}
-
-// ===== Просмотр всех оценок студента по ИД =====
-// Основной способ — интеграция через iframe со страницей студента сервиса
-// (как в embed-example.html). Если страница недоступна (локальный запуск, CORS,
-// отсутствие сети) — отображается таблица, полученная напрямую из API.
-function showTrackerGrades() {
-    const studentId = trackerStudentIdInput.value.trim();
-    if (!studentId) {
-        setTrackerStatus('Сначала введите ИД студента.', 'err');
-        trackerStudentIdInput.focus();
-        return;
-    }
-    trackerViewBtn.disabled = true;
-    trackerViewBtn.textContent = '⏳ Загрузка...';
-    setTrackerStatus('Загружаем все оценки студента ' + studentId + '...', 'info');
-
-    const pageUrl = `${TRACKER_STUDENT_PAGE}?id=${encodeURIComponent(studentId)}`;
-    trackerOpenNewTab.href = pageUrl;
-    trackerGradesPanel.classList.remove('hidden');
-    trackerGradesFrame.classList.remove('hidden');
-    trackerGradesFallback.classList.add('hidden');
-    trackerGradesFrame.src = pageUrl;
-
-    trackerFetchRecords(studentId).then(records => {
-        // iframe открыт; дополнительно готовим резервную таблицу на случай,
-        // если страница внутри iframe не отобразится
-        renderTrackerGradesTable(records, studentId);
-        setTrackerStatus(`✅ Показаны все оценки студента ${studentId} (записей: ${records.length}).`, 'ok');
-    }).catch(err => {
-        // iframe, скорее всего, тоже не загрузится — переключаемся на таблицу из API
-        trackerGradesFrame.classList.add('hidden');
-        renderTrackerGradesTable(null, studentId, err);
-        setTrackerStatus('⚠ Страница оценок недоступна (' + err.message + '), показаны данные из API.', 'info');
-    }).finally(() => {
-        trackerViewBtn.disabled = false;
-        trackerViewBtn.textContent = '📋 Все оценки по ИД';
-    });
-}
-
-function renderTrackerGradesTable(records, studentId, error) {
-    trackerGradesFallback.classList.remove('hidden');
-    trackerGradesFallback.innerHTML = '';
-    if (error) {
-        const p = document.createElement('p');
-        p.textContent = 'Не удалось получить оценки: ' + error.message;
-        trackerGradesFallback.appendChild(p);
-        return;
-    }
-    const title = document.createElement('p');
-    title.style.fontWeight = '700';
-    title.textContent = `Оценки студента ${studentId}:`;
-    trackerGradesFallback.appendChild(title);
-    if (!records.length) {
-        const empty = document.createElement('p');
-        empty.style.color = '#64748b';
-        empty.textContent = 'Записей пока нет.';
-        trackerGradesFallback.appendChild(empty);
-        return;
-    }
-    const table = document.createElement('table');
-    const thead = document.createElement('thead');
-    thead.innerHTML = '<tr><th>Дата/время</th><th>Активность</th><th>Оценка</th></tr>';
-    table.appendChild(thead);
-    const tbody = document.createElement('tbody');
-    records.forEach(r => {
-        const tr = document.createElement('tr');
-        const d = r.date_time ? new Date(r.date_time).toLocaleString('ru-RU') : '—';
-        const act = document.createElement('td'); act.textContent = r.activity || '—';
-        const gr = document.createElement('td'); gr.textContent = r.grade != null ? r.grade : '—';
-        const td = document.createElement('td'); td.textContent = d;
-        tr.append(td, act, gr);
-        tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    trackerGradesFallback.appendChild(table);
 }
 
 // ===== Обработчики событий =====
@@ -1834,7 +1732,7 @@ closeQrBtn.addEventListener('click', stopQRScanner);
 confirmNameBtn.addEventListener('click', confirmName);
 
 urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleUrlLoad(); });
-[lastNameInput, firstNameInput, middleNameInput, groupInput].forEach(inp =>
+[lastNameInput, firstNameInput, groupInput].forEach(inp =>
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') confirmName(); })
 );
 
@@ -1849,9 +1747,6 @@ changeNameBtn.addEventListener('click', openNameOverlay);
 // Student Tracker: сохранение результата по ИД студента (Enter тоже отправляет)
 trackerSaveBtn.addEventListener('click', saveResultToTracker);
 trackerStudentIdInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveResultToTracker(); });
-// Просмотр всех оценок по ИД и закрытие панели
-trackerViewBtn.addEventListener('click', showTrackerGrades);
-trackerGradesCloseBtn.addEventListener('click', hideGradesPanel);
 
 // ===== Инициализация =====
 function init() {

@@ -598,14 +598,6 @@
                 <div id="resultsSummary" class="results-summary"></div>
 
                 <div class="results-hero">
-                    <div class="student-badge">
-                        <div class="avatar" id="resultAvatar">—</div>
-                        <div>
-                            <div class="student-label">Студент</div>
-                            <div class="student-name" id="resultStudentName">—</div>
-                        </div>
-                    </div>
-
                     <div class="score-wrap">
                         <svg class="score-ring" width="180" height="180" viewBox="0 0 180 180">
                             <defs>
@@ -619,7 +611,6 @@
                         </svg>
                         <div class="ring-center">
                             <div class="score" id="score">0%</div>
-                            <div class="grade-pill grade-0" id="gradePill">Оценка: —</div>
                         </div>
                     </div>
 
@@ -639,23 +630,14 @@
                 <div id="trackerCard" class="tracker-card">
                     <div class="tracker-title">💾 Сохранение результата</div>
                     <div class="tracker-hint">Введите ваш ИД (студенческий билет) — остальная информация
-                        (ФИО, группа, название теста, вопросы, правильные ответы, время) возьмётся из результатов автоматически.</div>
+                        (ФИО, группа, название теста, вопросы, правильные ответы, время) возьмётся из результатов автоматически.
+                        После сохранения все оценки откроются в новой вкладке.</div>
                     <div class="tracker-form">
                         <input type="text" id="trackerStudentIdInput" class="tracker-id-input"
                                placeholder="ИД студента (студенческий билет)" autocomplete="off" inputmode="numeric">
                         <button id="trackerSaveBtn" class="btn btn-success">💾 Сохранить результат</button>
-                        <button id="trackerViewBtn" class="btn btn-ghost hidden">📋 Все оценки по ИД</button>
                     </div>
                     <div id="trackerStatus" class="tracker-status hidden"></div>
-                    <!-- Панель просмотра всех оценок студента (интеграция через iframe + API) -->
-                    <div id="trackerGradesPanel" class="hidden">
-                        <iframe id="trackerGradesFrame" title="Оценки студента" loading="lazy"></iframe>
-                        <div id="trackerGradesFallback" class="hidden"></div>
-                        <div class="tracker-grades-actions">
-                            <a id="trackerOpenNewTab" class="link-btn" target="_blank" rel="noopener">Открыть в новой вкладке ↗</a>
-                            <button id="trackerGradesCloseBtn" class="link-btn">✕ Закрыть</button>
-                        </div>
-                    </div>
                 </div>
 
                 <div id="detailedResults"></div>
@@ -681,10 +663,6 @@
                 <div class="field">
                     <label for="firstNameInput">Имя *</label>
                     <input type="text" id="firstNameInput" placeholder="Иван" autocomplete="given-name">
-                </div>
-                <div class="field">
-                    <label for="middleNameInput">Отчество</label>
-                    <input type="text" id="middleNameInput" placeholder="Иванович" autocomplete="additional-name">
                 </div>
                 <div class="field">
                     <label for="groupInput">Группа</label>
