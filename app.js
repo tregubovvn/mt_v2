@@ -9,8 +9,6 @@ const YANDEX_API_PREFIX = 'https://cloud-api.yandex.net/v1/disk/public/resources
 const STORAGE_KEY_STUDENT = 'quizStudent';
 const STORAGE_KEY_TRACKER_ID = 'quizStudentTrackerId'; // ИД студента (студенческий билет) для Student Tracker
 // Student Tracker — сервис сохранения результатов (см. embed-example.html репозитория save_all_result)
-const TRACKER_BASE_URL = 'https://tregubovvn.github.io/save_all_result/public/';
-const TRACKER_API_URL = TRACKER_BASE_URL + 'api.js';
 const SCORE_RING_LENGTH = 440;      // длина окружности индикатора результата (2·π·70)
 const GRADE_THRESHOLDS = [          // процент правильных ответов -> оценка по 5-балльной шкале
     { min: 85, grade: 5 },
@@ -133,7 +131,13 @@ const checkAnswerBtn = document.getElementById('checkAnswerBtn'); // «Пров�
 const trackerCard = document.getElementById('trackerCard');
 const trackerStudentIdInput = document.getElementById('trackerStudentIdInput');
 const trackerSaveBtn = document.getElementById('trackerSaveBtn');
+const trackerViewBtn = document.getElementById('trackerViewBtn');
 const trackerStatus = document.getElementById('trackerStatus');
+const trackerGradesPanel = document.getElementById('trackerGradesPanel');
+const trackerGradesFrame = document.getElementById('trackerGradesFrame');
+const trackerGradesFallback = document.getElementById('trackerGradesFallback');
+const trackerOpenNewTab = document.getElementById('trackerOpenNewTab');
+const trackerGradesCloseBtn = document.getElementById('trackerGradesCloseBtn');
 
 
 // ===== Вспомогательные функции =====
@@ -1596,6 +1600,64 @@ function renderDetailedResults() {
 }
 
 // ===== Student Tracker: сохранение результата по одному ИД студента =====
+// Интеграция напрямую (см. embed-example.html репозитория save_all_result):
+// запросы к Supabase выполняются встроенным клиентом — внешние скрипты не загружаются,
+// поэтому ошибка «Не удалось загрузить Student API» невозможна.
+const SUPABASE_URL = 'https://nfoynqfjkvgtqsgwxves.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5mb3lucWZqa3ZndHFzZ3d4dmVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNzc3NDUsImV4cCI6MjEwODk1Mzc0NX0.SR2krMy390zOPeVwUjdBAhufwcj57Kk8VQXqFBu3Fdo';
+const TRACKER_STUDENT_PAGE = 'https://tregubovvn.github.io/save_all_result/public/student.html';
+
+function supabaseHeaders(extra) {
+    return Object.assign({
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json'
+    }, extra || {});
+}
+
+async function trackerSave(data) {
+    if (!data || !data.studentId) throw new Error('Не указан studentId');
+    if (!data.activity) throw new Error('Не указано название активности');
+    if (data.grade === undefined || data.grade === null || data.grade === '') throw new Error('Не указана оценка');
+
+    // Ограничение сервиса: сохранять можно не чаще раза в 10 минут для одного ИД
+    const last = await trackerFetchRecords(data.studentId, 1);
+    if (last.length) {
+        const diffMin = (Date.now() - new Date(last[0].date_time).getTime()) / 60000;
+        if (diffMin < 10) {
+            throw new Error(`Можно сохранять не чаще раза в 10 минут. Подождите ещё ${Math.ceil(10 - diffMin)} мин.`);
+        }
+    }
+
+    const record = {
+        student_id: String(data.studentId),
+        activity: data.activity,
+        grade: String(data.grade),
+        comment: data.comment || '',
+        date_time: new Date().toISOString()
+    };
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/records?apikey=${encodeURIComponent(SUPABASE_KEY)}`, {
+        method: 'POST',
+        headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
+        body: JSON.stringify(record)
+    });
+    if (!(resp.ok || resp.status === 201)) {
+        const t = await resp.text().catch(() => '');
+        throw new Error('Ошибка сервера: ' + t.slice(0, 120));
+    }
+    return { success: true, message: 'Запись сохранена', record };
+}
+
+async function trackerFetchRecords(studentId, limit) {
+    let url = `${SUPABASE_URL}/rest/v1/records?student_id=eq.${encodeURIComponent(studentId)}&order=date_time.desc`;
+    if (limit) url += `&limit=${limit}`;
+    url += `&apikey=${encodeURIComponent(SUPABASE_KEY)}`;
+    const resp = await fetch(url, { headers: supabaseHeaders() });
+    if (!resp.ok) throw new Error('Ошибка загрузки записей (' + resp.status + ')');
+    const json = await resp.json();
+    return Array.isArray(json) ? json : [];
+}
+
 // Название теста: <topicName> из XML, если его нет — текст/название первого вопроса.
 function stripHtmlToText(html) {
     const div = document.createElement('div');
@@ -1627,26 +1689,6 @@ function buildTrackerComment(res) {
     return `${parts.join('; ')} Результат: ${res.percent}% (оценка ${res.grade}), завершён ${res.endDateTimeStr}.`;
 }
 
-function loadTrackerApi() {
-    return new Promise((resolve, reject) => {
-        if (window.StudentAPI) return resolve(window.StudentAPI);
-        if (document.querySelector(`script[src="${TRACKER_API_URL}"]`)) {
-            // скрипт уже в DOM, но ещё не выполнился — ждём load/error
-            const check = setInterval(() => {
-                if (window.StudentAPI) { clearInterval(check); resolve(window.StudentAPI); }
-            }, 100);
-            setTimeout(() => { clearInterval(check); reject(new Error('Не удалось загрузить Student API')); }, 8000);
-            return;
-        }
-        const s = document.createElement('script');
-        s.src = TRACKER_API_URL;
-        s.onload = () => window.StudentAPI ? resolve(window.StudentAPI)
-                                           : reject(new Error('Student API недоступен'));
-        s.onerror = () => reject(new Error('Не удалось загрузить Student API (проверьте соединение)'));
-        document.head.appendChild(s);
-    });
-}
-
 function setTrackerStatus(message, type) {
     trackerStatus.textContent = message;
     trackerStatus.className = 'tracker-status' + (type ? ' ' + type : '');
@@ -1655,12 +1697,21 @@ function setTrackerStatus(message, type) {
     if (!message) trackerStatus.classList.add('hidden');
 }
 
+function hideGradesPanel() {
+    trackerGradesPanel.classList.add('hidden');
+    trackerGradesFrame.classList.remove('hidden');
+    trackerGradesFallback.classList.add('hidden');
+    trackerGradesFrame.src = 'about:blank';
+}
+
 // Подготовка карточки при каждом завершении теста: подстановка сохранённого ИД,
-// сброс состояния и показ предпросмотра того, что будет записано
+// сброс состояния и скрытие панели оценок
 function initTrackerCard() {
     trackerCard.classList.remove('tracker-ok', 'tracker-error');
     trackerSaveBtn.disabled = false;
     trackerSaveBtn.textContent = '💾 Сохранить результат';
+    trackerViewBtn.classList.add('hidden');
+    hideGradesPanel();
     let savedId = '';
     try { savedId = localStorage.getItem(STORAGE_KEY_TRACKER_ID) || ''; } catch (e) {}
     if (savedId) trackerStudentIdInput.value = savedId;
@@ -1685,19 +1736,19 @@ async function saveResultToTracker() {
     trackerSaveBtn.textContent = '⏳ Сохранение...';
 
     try {
-        const api = await loadTrackerApi();
         const payload = {
-            studentId: studentId,                                  // единственное поле ввода
-            activity: lastResult.testTitle,                        // название теста — по первому вопросу
-            grade: String(lastResult.grade),                       // оценка из результата
-            comment: buildTrackerComment(lastResult)               // примечание из результатов
+            studentId: studentId,                            // единственное поле ввода
+            activity: lastResult.testTitle,                  // название теста — по первому вопросу
+            grade: String(lastResult.grade),                 // оценка из результата
+            comment: buildTrackerComment(lastResult)         // примечание из результатов
         };
-        const result = await api.save(payload);
+        const result = await trackerSave(payload);
         if (result && result.success) {
             lastResult.saved = true;
             try { localStorage.setItem(STORAGE_KEY_TRACKER_ID, studentId); } catch (e) {}
-            setTrackerStatus('✅ Результат сохранён в Student Tracker.', 'ok');
+            setTrackerStatus('✅ Результат сохранён. Кнопка «Все оценки по ИД» показывает историю студента.', 'ok');
             trackerSaveBtn.textContent = '✓ Сохранено';
+            trackerViewBtn.classList.remove('hidden'); // рядом появляется кнопка просмотра всех оценок
         } else {
             throw new Error(result && result.message ? result.message : 'Сервер отклонил запись');
         }
@@ -1706,6 +1757,228 @@ async function saveResultToTracker() {
         trackerSaveBtn.disabled = false;
         trackerSaveBtn.textContent = '💾 Сохранить результат';
     }
+}
+
+// ===== Просмотр всех оценок студента по ИД =====
+// Основной способ — интеграция через iframe со страницей студента сервиса
+// (как в embed-example.html). Если страница недоступна (локальный запуск, CORS,
+// отсутствие сети) — отображается таблица, полученная напрямую из API.
+function showTrackerGrades() {
+    const studentId = trackerStudentIdInput.value.trim();
+    if (!studentId) {
+        setTrackerStatus('Сначала введите ИД студента.', 'err');
+        trackerStudentIdInput.focus();
+        return;
+    }
+    trackerViewBtn.disabled = true;
+    trackerViewBtn.textContent = '⏳ Загрузка...';
+    setTrackerStatus('Загружаем все оценки студента ' + studentId + '...', 'info');
+
+    const pageUrl = `${TRACKER_STUDENT_PAGE}?id=${encodeURIComponent(studentId)}`;
+    trackerOpenNewTab.href = pageUrl;
+    trackerGradesPanel.classList.remove('hidden');
+    trackerGradesFrame.classList.remove('hidden');
+    trackerGradesFallback.classList.add('hidden');
+    trackerGradesFrame.src = pageUrl;
+
+    trackerFetchRecords(studentId).then(records => {
+        // iframe открыт; дополнительно готовим резервную таблицу на случай,
+        // если страница внутри iframe не отобразится
+        renderTrackerGradesTable(records, studentId);
+        setTrackerStatus(`✅ Показаны все оценки студента ${studentId} (записей: ${records.length}).`, 'ok');
+    }).catch(err => {
+        // iframe, скорее всего, тоже не загрузится — переключаемся на таблицу из API
+        trackerGradesFrame.classList.add('hidden');
+        renderTrackerGradesTable(null, studentId, err);
+        setTrackerStatus('⚠ Страница оценок недоступна (' + err.message + '), показаны данные из API.', 'info');
+    }).finally(() => {
+        trackerViewBtn.disabled = false;
+        trackerViewBtn.textContent = '📋 Все оценки по ИД';
+    });
+}
+
+function renderTrackerGradesTable(records, studentId, error) {
+    trackerGradesFallback.classList.remove('hidden');
+    trackerGradesFallback.innerHTML = '';
+    if (error) {
+        const p = document.createElement('p');
+        p.textContent = 'Не удалось получить оценки: ' + error.message;
+        trackerGradesFallback.appendChild(p);
+        return;
+    }
+    const title = document.createElement('p');
+    title.style.fontWeight = '700';
+    title.textContent = `Оценки студента ${studentId}:`;
+    trackerGradesFallback.appendChild(title);
+    if (!records.length) {
+        const empty = document.createElement('p');
+        empty.style.color = '#64748b';
+        empty.textContent = 'Записей пока нет.';
+        trackerGradesFallback.appendChild(empty);
+        return;
+    }
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr><th>Дата/время</th><th>Активность</th><th>Оценка</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    records.forEach(r => {
+        const tr = document.createElement('tr');
+        const d = r.date_time ? new Date(r.date_time).toLocaleString('ru-RU') : '—';
+        const act = document.createElement('td'); act.textContent = r.activity || '—';
+        const gr = document.createElement('td'); gr.textContent = r.grade != null ? r.grade : '—';
+        const td = document.createElement('td'); td.textContent = d;
+        tr.append(td, act, gr);
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    trackerGradesFallback.appendChild(table);
+}
+
+function setTrackerStatus(message, type) {
+    trackerStatus.textContent = message;
+    trackerStatus.className = 'tracker-status' + (type ? ' ' + type : '');
+    trackerCard.classList.toggle('tracker-ok', type === 'ok');
+    trackerCard.classList.toggle('tracker-error', type === 'err');
+    if (!message) trackerStatus.classList.add('hidden');
+}
+
+function hideGradesPanel() {
+    trackerGradesPanel.classList.add('hidden');
+    trackerGradesFrame.classList.remove('hidden');
+    trackerGradesFallback.classList.add('hidden');
+    trackerGradesFrame.src = 'about:blank';
+}
+
+// Подготовка карточки при каждом завершении теста: подстановка сохранённого ИД,
+// сброс состояния и скрытие панели оценок
+function initTrackerCard() {
+    trackerCard.classList.remove('tracker-ok', 'tracker-error');
+    trackerSaveBtn.disabled = false;
+    trackerSaveBtn.textContent = '💾 Сохранить результат';
+    trackerViewBtn.classList.add('hidden');
+    hideGradesPanel();
+    let savedId = '';
+    try { savedId = localStorage.getItem(STORAGE_KEY_TRACKER_ID) || ''; } catch (e) {}
+    if (savedId) trackerStudentIdInput.value = savedId;
+    setTrackerStatus('', null);
+    trackerStudentIdInput.focus();
+}
+
+async function saveResultToTracker() {
+    if (!lastResult) {
+        setTrackerStatus('Нет данных завершённого теста для сохранения.', 'err');
+        return;
+    }
+    const studentId = trackerStudentIdInput.value.trim();
+    if (!studentId) {
+        setTrackerStatus('Введите ваш ИД (студенческий билет).', 'err');
+        trackerStudentIdInput.focus();
+        return;
+    }
+
+    setTrackerStatus('Сохраняем результат...', 'info');
+    trackerSaveBtn.disabled = true;
+    trackerSaveBtn.textContent = '⏳ Сохранение...';
+
+    try {
+        const payload = {
+            studentId: studentId,                            // единственное поле ввода
+            activity: lastResult.testTitle,                  // название теста — по первому вопросу
+            grade: String(lastResult.grade),                 // оценка из результата
+            comment: buildTrackerComment(lastResult)         // примечание из результатов
+        };
+        const result = await trackerSave(payload);
+        if (result && result.success) {
+            lastResult.saved = true;
+            try { localStorage.setItem(STORAGE_KEY_TRACKER_ID, studentId); } catch (e) {}
+            setTrackerStatus('✅ Результат сохранён. Кнопка «Все оценки по ИД» показывает историю студента.', 'ok');
+            trackerSaveBtn.textContent = '✓ Сохранено';
+            trackerViewBtn.classList.remove('hidden'); // рядом появляется кнопка просмотра всех оценок
+        } else {
+            throw new Error(result && result.message ? result.message : 'Сервер отклонил запись');
+        }
+    } catch (error) {
+        setTrackerStatus('✗ ' + error.message, 'err');
+        trackerSaveBtn.disabled = false;
+        trackerSaveBtn.textContent = '💾 Сохранить результат';
+    }
+}
+
+// ===== Просмотр всех оценок студента по ИД =====
+// Основной способ — интеграция через iframe со страницей студента сервиса
+// (как в embed-example.html). Если страница недоступна (локальный запуск, CORS,
+// отсутствие сети) — отображается таблица, полученная напрямую из API.
+function showTrackerGrades() {
+    const studentId = trackerStudentIdInput.value.trim();
+    if (!studentId) {
+        setTrackerStatus('Сначала введите ИД студента.', 'err');
+        trackerStudentIdInput.focus();
+        return;
+    }
+    trackerViewBtn.disabled = true;
+    trackerViewBtn.textContent = '⏳ Загрузка...';
+    setTrackerStatus('Загружаем все оценки студента ' + studentId + '...', 'info');
+
+    const pageUrl = `${TRACKER_STUDENT_PAGE}?id=${encodeURIComponent(studentId)}`;
+    trackerOpenNewTab.href = pageUrl;
+    trackerGradesPanel.classList.remove('hidden');
+    trackerGradesFrame.classList.remove('hidden');
+    trackerGradesFallback.classList.add('hidden');
+    trackerGradesFrame.src = pageUrl;
+
+    trackerFetchRecords(studentId).then(records => {
+        // iframe открыт; дополнительно готовим резервную таблицу на случай,
+        // если страница внутри iframe не отобразится
+        renderTrackerGradesTable(records, studentId);
+        setTrackerStatus(`✅ Показаны все оценки студента ${studentId} (записей: ${records.length}).`, 'ok');
+    }).catch(err => {
+        // iframe, скорее всего, тоже не загрузится — переключаемся на таблицу из API
+        trackerGradesFrame.classList.add('hidden');
+        renderTrackerGradesTable(null, studentId, err);
+        setTrackerStatus('⚠ Страница оценок недоступна (' + err.message + '), показаны данные из API.', 'info');
+    }).finally(() => {
+        trackerViewBtn.disabled = false;
+        trackerViewBtn.textContent = '📋 Все оценки по ИД';
+    });
+}
+
+function renderTrackerGradesTable(records, studentId, error) {
+    trackerGradesFallback.classList.remove('hidden');
+    trackerGradesFallback.innerHTML = '';
+    if (error) {
+        const p = document.createElement('p');
+        p.textContent = 'Не удалось получить оценки: ' + error.message;
+        trackerGradesFallback.appendChild(p);
+        return;
+    }
+    const title = document.createElement('p');
+    title.style.fontWeight = '700';
+    title.textContent = `Оценки студента ${studentId}:`;
+    trackerGradesFallback.appendChild(title);
+    if (!records.length) {
+        const empty = document.createElement('p');
+        empty.style.color = '#64748b';
+        empty.textContent = 'Записей пока нет.';
+        trackerGradesFallback.appendChild(empty);
+        return;
+    }
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr><th>Дата/время</th><th>Активность</th><th>Оценка</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    records.forEach(r => {
+        const tr = document.createElement('tr');
+        const d = r.date_time ? new Date(r.date_time).toLocaleString('ru-RU') : '—';
+        const act = document.createElement('td'); act.textContent = r.activity || '—';
+        const gr = document.createElement('td'); gr.textContent = r.grade != null ? r.grade : '—';
+        const td = document.createElement('td'); td.textContent = d;
+        tr.append(td, act, gr);
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    trackerGradesFallback.appendChild(table);
 }
 
 // ===== Обработчики событий =====
@@ -1732,6 +2005,9 @@ changeNameBtn.addEventListener('click', openNameOverlay);
 // Student Tracker: сохранение результата по ИД студента (Enter тоже отправляет)
 trackerSaveBtn.addEventListener('click', saveResultToTracker);
 trackerStudentIdInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveResultToTracker(); });
+// Просмотр всех оценок по ИД и закрытие панели
+trackerViewBtn.addEventListener('click', showTrackerGrades);
+trackerGradesCloseBtn.addEventListener('click', hideGradesPanel);
 
 // ===== Инициализация =====
 function init() {
