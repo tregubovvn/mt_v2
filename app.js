@@ -1567,6 +1567,7 @@ function renderDetailedResults() {
 }
 
 // ===== Student Tracker: сохранение результата по одному ИД студента =====
+// (элементы карточки и константы объявляются в начале файла)
 // Интеграция напрямую (см. embed-example.html репозитория save_all_result):
 // запросы к Supabase выполняются встроенным клиентом — внешние скрипты не загружаются,
 // поэтому ошибка «Не удалось загрузить Student API» невозможна.
@@ -1698,6 +1699,11 @@ async function saveResultToTracker() {
     trackerSaveBtn.disabled = true;
     trackerSaveBtn.textContent = '⏳ Сохранение...';
 
+    // Браузеры разрешают window.open только из «прямого» действия пользователя
+    // (клик/Enter). Сетевые запросы ниже — асинхронные, поэтому вкладку с
+    // оценками открываем заранее: about:blank, затем подменяем URL после успеха.
+    const gradesWindow = window.open('about:blank', '_blank');
+
     try {
         const payload = {
             studentId: studentId,                            // единственное поле ввода
@@ -1709,14 +1715,21 @@ async function saveResultToTracker() {
         if (result && result.success) {
             lastResult.saved = true;
             try { localStorage.setItem(STORAGE_KEY_TRACKER_ID, studentId); } catch (e) {}
-            setTrackerStatus('✅ Результат сохранён. Все оценки студента открыты в новой вкладке.', 'ok');
-            trackerSaveBtn.textContent = '✓ Сохранено';
-            // все оценки студента — сразу в новой вкладке
-            window.open(trackerStudentPageUrl(studentId), '_blank', 'noopener');
+            const gradesUrl = trackerStudentPageUrl(studentId);
+            if (gradesWindow) {
+                // все оценки студента — сразу в новой вкладке
+                gradesWindow.location.href = gradesUrl;
+                setTrackerStatus('✅ Результат сохранён. Все оценки студента открыты в новой вкладке.', 'ok');
+                trackerSaveBtn.textContent = '✓ Сохранено';
+            } else {
+                // Новая вкладка заблокирована браузером — открываем оценки здесь
+                window.location.href = gradesUrl;
+            }
         } else {
             throw new Error(result && result.message ? result.message : 'Сервер отклонил запись');
         }
     } catch (error) {
+        if (gradesWindow) gradesWindow.close(); // не оставляем пустую вкладку при ошибке
         setTrackerStatus('✗ ' + error.message, 'err');
         trackerSaveBtn.disabled = false;
         trackerSaveBtn.textContent = '💾 Сохранить результат';
