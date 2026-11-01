@@ -451,6 +451,38 @@
             .summary-row { flex-direction: column; gap: 2px; }
             .summary-value { text-align: left; margin-left: 0; }
         }
+
+        /* ===== Student Tracker (сохранение результата) ===== */
+        .tracker-frame-wrap { display: none; height: 0; overflow: hidden; }
+        #trackerIframe { width: 100%; border: none; display: block; }
+        .tracker-card {
+            border: 1.5px dashed #c7d2fe;
+            border-radius: 16px;
+            padding: 18px 20px;
+            margin-top: 20px;
+            background: linear-gradient(180deg, #fafbff, #fff);
+        }
+        .tracker-card.tracker-ok { border-color: #a7f3d0; background: #f4fdf9; }
+        .tracker-card.tracker-error { border-color: #fecaca; background: #fef7f7; }
+        .tracker-title { font-size: 15px; font-weight: 800; margin-bottom: 4px; }
+        .tracker-hint { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+        .tracker-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .tracker-id-input {
+            flex: 1; min-width: 200px;
+            padding: 12px 14px; border: 1.5px solid #e2e8f0; border-radius: 12px;
+            font-size: 15px; font-family: inherit; background: #f8fafc; transition: .2s;
+        }
+        .tracker-id-input:focus {
+            outline: none; border-color: var(--primary);
+            box-shadow: 0 0 0 4px rgba(99,102,241,.14); background: #fff;
+        }
+        .tracker-status { margin-top: 10px; font-size: 13.5px; font-weight: 600; min-height: 18px; }
+        .tracker-status.ok { color: #059669; }
+        .tracker-status.err { color: #b91c1c; }
+        .tracker-status.info { color: #475569; font-weight: 500; }
+        @media (max-width: 640px) {
+            .tracker-form { flex-direction: column; align-items: stretch; }
+        }
     </style>
     <!-- Библиотека сканирования QR-кодов -->
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
@@ -589,6 +621,19 @@
                     </div>
                 </div>
 
+                <!-- Сохранение результата в Student Tracker: студент вводит только свой ИД -->
+                <div id="trackerCard" class="tracker-card">
+                    <div class="tracker-title">💾 Сохранение результата</div>
+                    <div class="tracker-hint">Введите ваш ИД (студенческий билет) — остальная информация
+                        (ФИО, группа, название теста, вопросы, правильные ответы, время) возьмётся из результатов автоматически.</div>
+                    <div class="tracker-form">
+                        <input type="text" id="trackerStudentIdInput" class="tracker-id-input"
+                               placeholder="ИД студента (студенческий билет)" autocomplete="off" inputmode="numeric">
+                        <button id="trackerSaveBtn" class="btn btn-success">💾 Сохранить результат</button>
+                    </div>
+                    <div id="trackerStatus" class="tracker-status hidden"></div>
+                </div>
+
                 <div id="detailedResults"></div>
             </section>
         </div>
@@ -613,9 +658,13 @@
                     <label for="firstNameInput">Имя *</label>
                     <input type="text" id="firstNameInput" placeholder="Иван" autocomplete="given-name">
                 </div>
-                <div class="field field-full">
-                    <label for="middleNameInput">Группа</label>
-                    <input type="text" id="middleNameInput" placeholder="б1_МЕНЖ-11 (необязательно)" autocomplete="organization">
+                <div class="field">
+                    <label for="middleNameInput">Отчество</label>
+                    <input type="text" id="middleNameInput" placeholder="Иванович" autocomplete="additional-name">
+                </div>
+                <div class="field">
+                    <label for="groupInput">Группа</label>
+                    <input type="text" id="groupInput" placeholder="б1_МЕНЖ-11" autocomplete="organization">
                 </div>
             </div>
             <div id="nameError" class="name-error hidden"></div>
@@ -648,6 +697,8 @@
         </div>
     </div>
 
+    <!-- Student Tracker API (сохранение результатов): window.StudentAPI -->
+    <script src="https://tregubovvn.github.io/save_all_result/public/api.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

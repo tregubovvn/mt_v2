@@ -7,6 +7,10 @@ const CRUSH_MAX_ERRORS = 3; // максимум ошибок за одну се�
 const LETTERS = ['А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З', 'И', 'К'];
 const YANDEX_API_PREFIX = 'https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=';
 const STORAGE_KEY_STUDENT = 'quizStudent';
+const STORAGE_KEY_TRACKER_ID = 'quizStudentTrackerId'; // ИД студента (студенческий билет) для Student Tracker
+// Student Tracker — сервис сохранения результатов (см. embed-example.html репозитория save_all_result)
+const TRACKER_BASE_URL = 'https://tregubovvn.github.io/save_all_result/public/';
+const TRACKER_API_URL = TRACKER_BASE_URL + 'api.js';
 const SCORE_RING_LENGTH = 440;      // длина окружности индикатора результата (2·π·70)
 const GRADE_THRESHOLDS = [          // процент правильных ответов -> оценка по 5-балльной шкале
     { min: 85, grade: 5 },
@@ -62,6 +66,8 @@ let startTime = null;         // момент старта теста (Date.now(
 let timerInterval = null;
 let timeSpent = 0;            // секунды с момента старта теста
 let studentName = '';
+let studentGroup = '';        // группа студента (вводится на старте, сохраняется в localStorage)
+let lastResult = null;        // данные последнего завершённого теста (для сохранения в Student Tracker)
 let pendingStartAfterName = false; // автозагрузка ждёт подтверждения ФИО
 let qrScannerActive = false;
 let videoStream = null;
@@ -112,6 +118,7 @@ const welcomeOverlay = document.getElementById('welcomeOverlay');
 const lastNameInput = document.getElementById('lastNameInput');
 const firstNameInput = document.getElementById('firstNameInput');
 const middleNameInput = document.getElementById('middleNameInput');
+const groupInput = document.getElementById('groupInput');
 const nameError = document.getElementById('nameError');
 const confirmNameBtn = document.getElementById('confirmNameBtn');
 const qrModal = document.getElementById('qrModal');
@@ -123,6 +130,10 @@ const crushBadge = document.getElementById('crushBadge');
 const headerBadge = document.getElementById('headerBadge');
 const crushAttemptsPill = document.getElementById('crushAttemptsPill');
 const checkAnswerBtn = document.getElementById('checkAnswerBtn'); // «Проверить ответ» — единая кнопка проверки (CheckMode и/или CrushMode)
+const trackerCard = document.getElementById('trackerCard');
+const trackerStudentIdInput = document.getElementById('trackerStudentIdInput');
+const trackerSaveBtn = document.getElementById('trackerSaveBtn');
+const trackerStatus = document.getElementById('trackerStatus');
 
 
 // ===== Вспомогательные функции =====
@@ -202,9 +213,19 @@ function protectMathAngles(html) {
 }
 
 // ===== Логика ФИО =====
+// Фамилия / Имя / Отчество — три отдельных поля приветствия
+function getLastName() {
+    return lastNameInput.value.trim();
+}
+
 function getFullName() {
     return [lastNameInput.value.trim(), firstNameInput.value.trim(), middleNameInput.value.trim()]
         .filter(Boolean).join(' ');
+}
+
+// Группа студента (поле «Группа» в приветственном окне)
+function getGroup() {
+    return groupInput ? groupInput.value.trim() : '';
 }
 
 function updateStudentUI() {
@@ -228,9 +249,10 @@ function confirmName() {
         return;
     }
     studentName = getFullName();
+    studentGroup = getGroup();
     try {
         localStorage.setItem(STORAGE_KEY_STUDENT, JSON.stringify({
-            l, f, m: middleNameInput.value.trim()
+            l, f, m: middleNameInput.value.trim(), g: studentGroup
         }));
     } catch (e) { console.warn('localStorage недоступен', e); }
     updateStudentUI();
@@ -252,6 +274,8 @@ function openNameOverlay() {
             lastNameInput.value = saved.l || '';
             firstNameInput.value = saved.f || '';
             middleNameInput.value = saved.m || '';
+            // старые записи могли хранить группу в поле «Отчество» — мигрируем
+            groupInput.value = saved.g !== undefined ? saved.g : (saved.m || '');
         }
     } catch (e) {}
     pendingStartAfterName = false;
@@ -1481,6 +1505,23 @@ function finishTest() {
     });
     renderResultsSummary(endDateTimeStr, grade);
 
+    // Сохраняем данные результата — они подставляются в запись Student Tracker,
+    // чтобы студенту нужно было ввести только свой ИД (студенческий билет)
+    lastResult = {
+        testTitle: getTestTitle(),
+        studentName: studentName || '',
+        studentGroup: studentGroup || '',
+        totalQuestions: total,
+        correctAnswers: correct,
+        percent: pct,
+        grade: grade,
+        timeSpent: timeSpent,
+        timeSpentStr: formatTime(timeSpent),
+        endDateTimeStr: endDateTimeStr,
+        saved: false
+    };
+    initTrackerCard();
+
     renderDetailedResults();
     applyMathJax();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1554,6 +1595,119 @@ function renderDetailedResults() {
     });
 }
 
+// ===== Student Tracker: сохранение результата по одному ИД студента =====
+// Название теста: <topicName> из XML, если его нет — текст/название первого вопроса.
+function stripHtmlToText(html) {
+    const div = document.createElement('div');
+    div.innerHTML = html || '';
+    return (div.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function getTestTitle() {
+    if (testTopicName) return testTopicName;
+    const first = questions.find(q => q.type !== 'description') || questions[0];
+    if (!first) return 'Тест';
+    const fromName = (first.name || '').trim();
+    if (fromName) return fromName;
+    const text = stripHtmlToText(first.text);
+    if (text) return text.length > 80 ? text.slice(0, 80) + '…' : text;
+    return 'Тест';
+}
+
+// Примечание к записи: ФИО, группа, количество вопросов,
+// количество правильных ответов, затраченное время (+ сводка результата)
+function buildTrackerComment(res) {
+    const parts = [
+        `ФИО: ${res.studentName || '—'}`,
+        `Группа: ${res.studentGroup || '—'}`,
+        `Вопросов: ${res.totalQuestions}`,
+        `Правильных ответов: ${res.correctAnswers}`,
+        `Затрачено времени: ${res.timeSpentStr}`,
+    ];
+    return `${parts.join('; ')} Результат: ${res.percent}% (оценка ${res.grade}), завершён ${res.endDateTimeStr}.`;
+}
+
+function loadTrackerApi() {
+    return new Promise((resolve, reject) => {
+        if (window.StudentAPI) return resolve(window.StudentAPI);
+        if (document.querySelector(`script[src="${TRACKER_API_URL}"]`)) {
+            // скрипт уже в DOM, но ещё не выполнился — ждём load/error
+            const check = setInterval(() => {
+                if (window.StudentAPI) { clearInterval(check); resolve(window.StudentAPI); }
+            }, 100);
+            setTimeout(() => { clearInterval(check); reject(new Error('Не удалось загрузить Student API')); }, 8000);
+            return;
+        }
+        const s = document.createElement('script');
+        s.src = TRACKER_API_URL;
+        s.onload = () => window.StudentAPI ? resolve(window.StudentAPI)
+                                           : reject(new Error('Student API недоступен'));
+        s.onerror = () => reject(new Error('Не удалось загрузить Student API (проверьте соединение)'));
+        document.head.appendChild(s);
+    });
+}
+
+function setTrackerStatus(message, type) {
+    trackerStatus.textContent = message;
+    trackerStatus.className = 'tracker-status' + (type ? ' ' + type : '');
+    trackerCard.classList.toggle('tracker-ok', type === 'ok');
+    trackerCard.classList.toggle('tracker-error', type === 'err');
+    if (!message) trackerStatus.classList.add('hidden');
+}
+
+// Подготовка карточки при каждом завершении теста: подстановка сохранённого ИД,
+// сброс состояния и показ предпросмотра того, что будет записано
+function initTrackerCard() {
+    trackerCard.classList.remove('tracker-ok', 'tracker-error');
+    trackerSaveBtn.disabled = false;
+    trackerSaveBtn.textContent = '💾 Сохранить результат';
+    let savedId = '';
+    try { savedId = localStorage.getItem(STORAGE_KEY_TRACKER_ID) || ''; } catch (e) {}
+    if (savedId) trackerStudentIdInput.value = savedId;
+    setTrackerStatus('', null);
+    trackerStudentIdInput.focus();
+}
+
+async function saveResultToTracker() {
+    if (!lastResult) {
+        setTrackerStatus('Нет данных завершённого теста для сохранения.', 'err');
+        return;
+    }
+    const studentId = trackerStudentIdInput.value.trim();
+    if (!studentId) {
+        setTrackerStatus('Введите ваш ИД (студенческий билет).', 'err');
+        trackerStudentIdInput.focus();
+        return;
+    }
+
+    setTrackerStatus('Сохраняем результат...', 'info');
+    trackerSaveBtn.disabled = true;
+    trackerSaveBtn.textContent = '⏳ Сохранение...';
+
+    try {
+        const api = await loadTrackerApi();
+        const payload = {
+            studentId: studentId,                                  // единственное поле ввода
+            activity: lastResult.testTitle,                        // название теста — по первому вопросу
+            grade: String(lastResult.grade),                       // оценка из результата
+            comment: buildTrackerComment(lastResult)               // примечание из результатов
+        };
+        const result = await api.save(payload);
+        if (result && result.success) {
+            lastResult.saved = true;
+            try { localStorage.setItem(STORAGE_KEY_TRACKER_ID, studentId); } catch (e) {}
+            setTrackerStatus('✅ Результат сохранён в Student Tracker.', 'ok');
+            trackerSaveBtn.textContent = '✓ Сохранено';
+        } else {
+            throw new Error(result && result.message ? result.message : 'Сервер отклонил запись');
+        }
+    } catch (error) {
+        setTrackerStatus('✗ ' + error.message, 'err');
+        trackerSaveBtn.disabled = false;
+        trackerSaveBtn.textContent = '💾 Сохранить результат';
+    }
+}
+
 // ===== Обработчики событий =====
 loadUrlBtn.addEventListener('click', handleUrlLoad);
 qrCodeBtn.addEventListener('click', startQRScanner);
@@ -1563,7 +1717,7 @@ closeQrBtn.addEventListener('click', stopQRScanner);
 confirmNameBtn.addEventListener('click', confirmName);
 
 urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleUrlLoad(); });
-[lastNameInput, firstNameInput, middleNameInput].forEach(inp =>
+[lastNameInput, firstNameInput, middleNameInput, groupInput].forEach(inp =>
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') confirmName(); })
 );
 
@@ -1574,6 +1728,10 @@ checkAnswerBtn.addEventListener('click', handleCheckClick);
 
 restartBtn.addEventListener('click', () => startTest());
 changeNameBtn.addEventListener('click', openNameOverlay);
+
+// Student Tracker: сохранение результата по ИД студента (Enter тоже отправляет)
+trackerSaveBtn.addEventListener('click', saveResultToTracker);
+trackerStudentIdInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveResultToTracker(); });
 
 // ===== Инициализация =====
 function init() {
