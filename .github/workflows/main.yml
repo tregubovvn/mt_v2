@@ -1,0 +1,43 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main # Название вашей основной ветки (main или master)
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Executing remote ssh commands to deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22 # Смените, если у вашего SSH нестандартный порт
+          script: |
+            # 1. Переходим в папку с проектом
+            cd /var/www/my-app || exit
+            
+            # 2. Обновляем код из GitHub
+            git reset --hard HEAD
+            git pull origin main
+            
+            # 3. --- БЛОК СБОРКИ И ПЕРЕЗАПУСКА ---
+            # Раскомментируйте или напишите команды под вашу технологию:
+            
+            # Для Node.js/PM2:
+            # npm install --production
+            # pm2 restart my-app
+            
+            # Для Docker Compose:
+            # docker compose up -d --build
+            
+            # Для Python (Gunicorn/Uvicorn через systemd):
+            # source venv/bin/activate && pip install -r requirements.txt
+            # sudo systemctl restart my-app
