@@ -1,9 +1,9 @@
-name: Deploy to Server
+name: Deploy Static Site
 
 on:
   push:
     branches:
-      - main # Название вашей основной ветки (main или master)
+      - main # Ваша основная ветка
 
 jobs:
   deploy:
@@ -11,33 +11,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v4.2.2 # Обновленная версия, без предупреждений о Node.js
 
-      - name: Executing remote ssh commands to deploy
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Copy files via SSH
+        uses: appleboy/scp-action@v0.1.7 # Специальный экшен для копирования файлов
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22 # Смените, если у вашего SSH нестандартный порт
-          script: |
-            # 1. Переходим в папку с проектом
-            cd /var/www/my-app || exit
-            
-            # 2. Обновляем код из GitHub
-            git reset --hard HEAD
-            git pull origin main
-            
-            # 3. --- БЛОК СБОРКИ И ПЕРЕЗАПУСКА ---
-            # Раскомментируйте или напишите команды под вашу технологию:
-            
-            # Для Node.js/PM2:
-            # npm install --production
-            # pm2 restart my-app
-            
-            # Для Docker Compose:
-            # docker compose up -d --build
-            
-            # Для Python (Gunicorn/Uvicorn через systemd):
-            # source venv/bin/activate && pip install -r requirements.txt
-            # sudo systemctl restart my-app
+          port: 22 # Укажите ваш порт (22 или тот, что нашли в sshd_config)
+          source: "." # Копируем всё содержимое репозитория
+          target: "/var/www/html/mt_v2" # Путь к папке сайта на вашем сервере
