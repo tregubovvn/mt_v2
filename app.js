@@ -1440,7 +1440,7 @@ function addSummaryRow(container, label, value) {
 
     const l = document.createElement('span');
     l.className = 'summary-label';
-    l.textContent = label;
+    l.textContent = label + ':';
 
     const v = document.createElement('span');
     v.className = 'summary-value';
@@ -1460,37 +1460,28 @@ function formatDateTime(date) {
     });
 }
 
-// Обязательная итоговая сводка: ФИО, оценка, тема, начало теста, окончание теста,
-// затраченное время, пропущенные вопросы. Все поля выводятся всегда; если данных
-// нет — показывается «—».
+// Единая итоговая сводка для всех типов тестирования (rt_v2 / mt_v2 / ft_v2):
+// ФИО + группа, оценка с процентом, тема, начало/окончание теста, затраченное время.
 function renderResultsSummary(data) {
     resultsSummary.innerHTML = '';
 
-    // 1. ФИО студента
-    addSummaryRow(resultsSummary, 'ФИО', data.studentName || '—');
+    const gradeNames = { 5: 'отлично', 4: 'хорошо', 3: 'удовлетворительно', 2: 'неудовлетворительно' };
+
+    // 1. ФИО студента и группа — одной строкой
+    addSummaryRow(resultsSummary, 'ФИО', (data.studentName || '—') + ' Группа: ' + (data.studentGroup || ''));
 
     // 2. Оценка (5-балльная шкала) и процент правильных ответов
-    const gradeNames = { 5: 'отлично', 4: 'хорошо', 3: 'удовлетворительно', 2: 'неудовлетворительно' };
     const gradeText = `${data.grade} (${gradeNames[data.grade] || '—'}), ${data.percent}% правильных ответов`;
     addSummaryRow(resultsSummary, 'Оценка', gradeText);
 
     // 3. Тема теста (<topicName> из XML, при отсутствии — название теста)
     addSummaryRow(resultsSummary, 'Тема', data.topic || '—');
 
-    // 4. Начало теста
-    addSummaryRow(resultsSummary, 'Начало теста', data.startDateTimeStr || '—');
+    // 4. Начало и окончание теста — одной строкой
+    addSummaryRow(resultsSummary, 'Начало теста', (data.startDateTimeStr || '—') + ' Окончание теста: ' + (data.endTimeStr || ''));
 
-    // 5. Окончание теста
-    addSummaryRow(resultsSummary, 'Окончание теста', data.endDateTimeStr || '—');
-
-    // 6. Затраченное время
+    // 5. Затраченное время
     addSummaryRow(resultsSummary, 'Затраченное время', data.timeSpentStr || '—');
-
-    // 7. Пропущенные вопросы (без ответа) — номера вопросов
-    const skippedText = data.skippedNumbers.length > 0
-        ? `${data.skippedNumbers.length} (вопросы № ${data.skippedNumbers.join(', ')})`
-        : 'Нет';
-    addSummaryRow(resultsSummary, 'Пропущенные вопросы', skippedText);
 }
 
 // ===== Завершение теста =====
@@ -1538,13 +1529,16 @@ function finishTest() {
     // затраченное время, пропущенные вопросы
     const startDateTimeStr = startTime ? formatDateTime(new Date(startTime)) : '';
     const endDateTimeStr = formatDateTime(new Date());
+    const endTimeStr = new Date().toLocaleTimeString('ru-RU');
     renderResultsSummary({
         studentName: studentName || '',
+        studentGroup: studentGroup || '',
         grade: grade,
         percent: pct,
         topic: testTopicName || getTestTitle(),
         startDateTimeStr: startDateTimeStr,
         endDateTimeStr: endDateTimeStr,
+        endTimeStr: endTimeStr,
         timeSpentStr: formatTime(timeSpent),
         skippedNumbers: skippedNumbers
     });

@@ -249,22 +249,16 @@
             background: linear-gradient(180deg, #fafbff, #fff);
             padding: 8px 20px;
             margin-bottom: 20px;
-            counter-reset: summary;
         }
         .summary-row {
             display: flex; align-items: baseline; gap: 14px;
             padding: 11px 0;
             border-bottom: 1px solid #eef1f6;
             font-size: 14.5px;
-            counter-increment: summary;
         }
         .summary-row:last-child { border-bottom: none; }
         .summary-label {
             color: var(--muted); font-weight: 600; flex-shrink: 0;
-        }
-        .summary-label::before {
-            content: counter(summary) '. ';
-            color: #a5b4fc; font-weight: 800;
         }
         .summary-value {
             font-weight: 700; text-align: right;
